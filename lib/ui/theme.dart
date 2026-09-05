@@ -46,6 +46,11 @@ class ZColors {
   static const danger = Color(0xFFEF4444);
   static const running = Color(0xFF38BDF8);
 
+  /// Full Access accent (light orange) — the unguarded mode gets a
+  /// deliberately louder color than the rest of the UI.
+  static const fullAccess = Color(0xFFFFB86B);
+  static const fullAccessDeep = Color(0xFFB45309);
+
   static const lightBg = Color(0xFFF6F8FC);
   static const lightSurface = Color(0xFFFFFFFF);
   static const lightCard = Color(0xFFFFFFFF);

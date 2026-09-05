@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart';
 
 import '../protocol/channel_client.dart';
@@ -128,6 +129,11 @@ class _PendingFile {
   _PendingFile(this.fileName, this.mime, this.bytes);
 }
 
+/// Composer drafts survive leaving the chat page: keyed by session id, or
+/// by workspace for not-yet-created sessions. Cleared implicitly when the
+/// message is sent (the controller is cleared, which saves the empty text).
+final Map<String, String> _composerDrafts = {};
+
 /// Removes only the number of confirmed echoes matching each user message.
 /// Failed echoes remain visible so the user can retry them.
 List<Map<String, dynamic>> removeEchoedTexts(
@@ -190,6 +196,9 @@ class _ChatPageState extends State<ChatPage> {
   bool _voiceWorking = false;
   String _voiceDraftPrefix = '';
 
+  /// Cache key for the composer draft of THIS chat view.
+  String get _draftKey => _sessionId ?? 'draft:${widget.workspaceKey}';
+
   /// Draft-mode (no session yet) model/mode/thought selection, passed as
   /// `config` to createSession on first send.
   final Map<String, String> _draftConfig = {};
@@ -212,8 +221,10 @@ class _ChatPageState extends State<ChatPage> {
     }
     _loadPrep();
     _loadVoiceAvailability();
+    _inputController.text = _composerDrafts[_draftKey] ?? '';
     _inputController.addListener(() {
       final text = _inputController.text;
+      _composerDrafts[_draftKey] = text;
       final show = (text.startsWith('/') || text.startsWith('\$')) &&
           !text.contains(' ');
       if (show != _showSlash && mounted) {
@@ -222,10 +233,16 @@ class _ChatPageState extends State<ChatPage> {
     });
   }
 
+  /// Follow/unpin decisions are made ONLY while the scroll is user-driven
+  /// (drag or fling). `userScrollDirection` is idle during the programmatic
+  /// follow animation, so streaming output cannot flip the flag — the view
+  /// stays put while the user reads older messages.
   void _onScroll() {
     if (!_scrollController.hasClients) return;
-    final max = _scrollController.position.maxScrollExtent;
-    _stickToBottom = _scrollController.position.pixels >= max - 40;
+    final pos = _scrollController.position;
+    if (pos.userScrollDirection == ScrollDirection.idle) return;
+    final max = pos.maxScrollExtent;
+    _stickToBottom = pos.pixels >= max - 40;
   }
 
   Future<void> _loadPrep() async {
@@ -345,9 +362,12 @@ class _ChatPageState extends State<ChatPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scrollController.hasClients) return;
       final max = _scrollController.position.maxScrollExtent;
-      // Snap to the newest message on open; afterwards only follow while the
-      // user is already near the bottom (so reading history isn't yanked).
-      if (_stickToBottom || _scrollController.position.pixels > max - 400) {
+      // Follow ONLY while the user is pinned to the bottom. There is no
+      // "near bottom" heuristic: during streaming maxScrollExtent grows, so
+      // a distance-based check keeps dragging the reader down. Once the
+      // user scrolls up, the view stays put until they return to the
+      // bottom themselves.
+      if (_stickToBottom) {
         _scrollController.animateTo(
           max,
           duration: const Duration(milliseconds: 200),
@@ -394,27 +414,109 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   /// Opens an auxiliary (side) chat attached to the current session
-  /// (`createSelectionSideSession`) in a fresh ChatPage.
+  /// (`createSelectionSideSession`). On wide screens (tablet / unfolded
+  /// foldable) it slides in as a right-side panel so the main chat stays
+  /// visible; narrow screens push a full ChatPage as before.
   Future<void> _openSideChat() async {
     final sessionId = _sessionId;
     if (sessionId == null) return;
     try {
       final sideId = await _transport.createSelectionSideSession(sessionId);
       if (!mounted) return;
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => ChatPage(
-            session: widget.session,
-            scope: widget.scope,
-            workspaceKey: widget.workspaceKey,
-            sessionId: sideId,
-            title: '辅助对话',
+      final width = MediaQuery.sizeOf(context).width;
+      if (width >= 640) {
+        await _showSideChatPanel(sideId);
+      } else {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => ChatPage(
+              session: widget.session,
+              scope: widget.scope,
+              workspaceKey: widget.workspaceKey,
+              sessionId: sideId,
+              title: '辅助对话',
+            ),
           ),
-        ),
-      );
+        );
+      }
     } catch (e) {
       _toast('打开辅助对话失败: $e');
     }
+  }
+
+  /// Right-anchored side panel hosting the auxiliary ChatPage. Tapping the
+  /// scrim or the header close button dismisses it.
+  Future<void> _showSideChatPanel(String sideId) {
+    return showGeneralDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: '关闭辅助对话',
+      barrierColor: Colors.black54,
+      transitionDuration: const Duration(milliseconds: 260),
+      pageBuilder: (dialogContext, animation, secondaryAnimation) {
+        final width = MediaQuery.sizeOf(dialogContext).width;
+        final panelWidth = (width * 0.55).clamp(360.0, 560.0);
+        return Align(
+          alignment: Alignment.centerRight,
+          child: Material(
+            color: Theme.of(dialogContext).scaffoldBackgroundColor,
+            elevation: 16,
+            child: SizedBox(
+              width: panelWidth,
+              child: SafeArea(
+                child: Column(
+                  children: [
+                    Container(
+                      height: 52,
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      decoration: BoxDecoration(
+                        border: Border(
+                          bottom: BorderSide(color: ZInk.hairline(dialogContext)),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text('辅助对话',
+                                style: TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600,
+                                    color: ZInk.solid(dialogContext))),
+                          ),
+                          IconButton(
+                            tooltip: '关闭',
+                            icon: Icon(Icons.close,
+                                size: 20, color: ZInk.muted(dialogContext)),
+                            onPressed: () => Navigator.pop(dialogContext),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: ChatPage(
+                        session: widget.session,
+                        scope: widget.scope,
+                        workspaceKey: widget.workspaceKey,
+                        sessionId: sideId,
+                        title: '辅助对话',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        final slide = Tween(
+          begin: const Offset(1, 0),
+          end: Offset.zero,
+        ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic));
+        return SlideTransition(position: slide, child: child);
+      },
+    );
   }
 
   // ------------------------------------------------------------ sending
@@ -552,6 +654,9 @@ class _ChatPageState extends State<ChatPage> {
         }
         log('[chat] createSession ok in ${sw.elapsedMilliseconds}ms');
         _sessionId = sessionId;
+        // The draft was consumed by the first send; drop it so backing out
+        // and starting another new session doesn't resurface the sent text.
+        _composerDrafts.remove('draft:${widget.workspaceKey}');
         // 2) subscribe in the background — must NOT block sending
         setState(() => _progress = null);
         if (canUseFirstInput) {
@@ -3638,6 +3743,83 @@ class _ModelModeSheet extends StatelessWidget {
     return (value.substring(0, idx), value.substring(idx + 1));
   }
 
+  // ------------------------------------------------------- mode presentation
+
+  static const _modeLabels = {
+    'build': '构建',
+    'edit': '编辑',
+    'plan': '计划',
+    'yolo': 'Full Access',
+  };
+
+  static const _modeDescriptions = {
+    'build': '标准协作：读写文件、执行命令、完成任务',
+    'edit': '聚焦编辑：专注修改文件，能力范围更可控',
+    'plan': '只读规划：先讨论和制定计划，不动代码',
+    'yolo': '完全访问：自动批准全部操作，无需逐项确认',
+  };
+
+  static bool _isFullAccessMode(String value) =>
+      value == 'yolo' || value.toLowerCase() == 'fullaccess';
+
+  static String _modeLabelOf(String value, {required String fallbackName}) {
+    final mapped = _modeLabels[value.trim().toLowerCase()];
+    return mapped ?? (fallbackName.isNotEmpty ? fallbackName : value);
+  }
+
+  static String? _modeDescriptionOf(String value, String? desktopDescription) {
+    if (desktopDescription != null && desktopDescription.isNotEmpty) {
+      return desktopDescription;
+    }
+    return _modeDescriptions[value.trim().toLowerCase()];
+  }
+
+  /// Full Access ink: deep orange on light theme, light orange on dark.
+  static Color _fullAccessInk(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.light
+          ? ZColors.fullAccessDeep
+          : ZColors.fullAccess;
+
+  Widget _modeChip(
+    BuildContext context, {
+    required String value,
+    required bool selected,
+  }) {
+    final isFull = _isFullAccessMode(value);
+    return ChoiceChip(
+      label: Text(
+        _modeLabelOf(value, fallbackName: value),
+        style: TextStyle(
+          fontSize: 13,
+          color: isFull ? _fullAccessInk(context) : null,
+          fontWeight: isFull ? FontWeight.w600 : null,
+        ),
+      ),
+      selected: selected,
+      onSelected: (_) {
+        if (_isDraft) {
+          onDraftChange?.call('mode', value);
+        } else {
+          _apply(
+            context,
+            () => transport.switchCollaborationMode(sessionId ?? '', value),
+          );
+        }
+      },
+      backgroundColor:
+          isFull ? ZColors.fullAccess.withValues(alpha: 0.12) : null,
+      selectedColor:
+          isFull ? ZColors.fullAccess.withValues(alpha: 0.30) : null,
+      side: isFull
+          ? BorderSide(
+              color: ZColors.fullAccess.withValues(
+                  alpha: selected ? 0.85 : 0.5),
+              width: selected ? 1.4 : 1,
+            )
+          : null,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final sid = sessionId ?? '';
@@ -3761,59 +3943,65 @@ class _ModelModeSheet extends StatelessWidget {
             const SizedBox(height: 8),
             if (modeOption != null && modeOption.options.isNotEmpty)
               for (final v in modeOption.options)
-                ListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  leading: Icon(
-                    currentModeValue == v.value
-                        ? Icons.radio_button_checked
-                        : Icons.radio_button_off,
-                    size: 18,
-                    color: currentModeValue == v.value
-                        ? ZColors.primary
-                        : ZInk.ghost(context),
-                  ),
-                  title: Text(v.name, style: const TextStyle(fontSize: 13)),
-                  subtitle: v.description != null
-                      ? Text(v.description!,
-                          style: TextStyle(
-                              fontSize: 11, color: ZInk.faint(context)))
-                      : null,
-                  onTap: () {
-                    if (_isDraft) {
-                      onDraftChange?.call('mode', v.value);
-                    } else {
-                      _apply(
-                        context,
-                        () => transport.switchCollaborationMode(sid, v.value),
-                        onAccepted: () => state?.optimisticPatch({
-                          'config': {
-                            ...?state!.config,
-                            'mode': v.value,
-                          },
-                        }),
-                      );
-                    }
-                  },
-                )
+                Builder(builder: (context) {
+                  final isFull = _isFullAccessMode(v.value);
+                  return ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(
+                      currentModeValue == v.value
+                          ? Icons.radio_button_checked
+                          : Icons.radio_button_off,
+                      size: 18,
+                      color: isFull
+                          ? _fullAccessInk(context)
+                          : (currentModeValue == v.value
+                              ? ZColors.primary
+                              : ZInk.ghost(context)),
+                    ),
+                    title: Text(
+                      _modeLabelOf(v.value, fallbackName: v.name),
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: isFull ? FontWeight.w600 : null,
+                        color: isFull ? _fullAccessInk(context) : null,
+                      ),
+                    ),
+                    subtitle: _modeDescriptionOf(v.value, v.description) != null
+                        ? Text(
+                            _modeDescriptionOf(v.value, v.description)!,
+                            style: TextStyle(
+                                fontSize: 11, color: ZInk.faint(context)),
+                          )
+                        : null,
+                    onTap: () {
+                      if (_isDraft) {
+                        onDraftChange?.call('mode', v.value);
+                      } else {
+                        _apply(
+                          context,
+                          () =>
+                              transport.switchCollaborationMode(sid, v.value),
+                          onAccepted: () => state?.optimisticPatch({
+                            'config': {
+                              ...?state!.config,
+                              'mode': v.value,
+                            },
+                          }),
+                        );
+                      }
+                    },
+                  );
+                })
             else
               Wrap(
                 spacing: 8,
                 children: [
                   for (final m in const ['build', 'edit', 'plan', 'yolo'])
-                    ChoiceChip(
-                      label: Text(m),
+                    _modeChip(
+                      context,
+                      value: m,
                       selected: currentModeValue == m,
-                      onSelected: (_) {
-                        if (_isDraft) {
-                          onDraftChange?.call('mode', m);
-                        } else {
-                          _apply(
-                            context,
-                            () => transport.switchCollaborationMode(sid, m),
-                          );
-                        }
-                      },
                     ),
                 ],
               ),
@@ -3972,7 +4160,7 @@ class _ModelPickerSectionState extends State<_ModelPickerSection> {
   List<Widget> _buildBody(BuildContext context) {
     final groups = _groups;
     // Degenerate grouping (single provider, or every model standalone) ->
-    // keep the flat list; a two-level drill-down would add a pointless tap.
+    // keep the flat list; an accordion would add a pointless tap.
     if (groups.length < 2 ||
         groups.length >= widget.modelOption.options.length) {
       return [
@@ -3980,18 +4168,33 @@ class _ModelPickerSectionState extends State<_ModelPickerSection> {
             showProviderSubtitle: true),
       ];
     }
-    final models = _openProvider == null ? null : groups[_openProvider];
-    if (models == null) {
-      return [for (final g in groups.entries) _providerRow(context, g)];
+    // Accordion: tapping a provider expands its model list in place; at
+    // most one section is open at a time. Every group keeps its AnimatedSize
+    // mounted so collapse animates too (child swaps to a zero-height box).
+    final widgets = <Widget>[];
+    for (final g in groups.entries) {
+      final expanded = _openProvider == g.key;
+      widgets.add(_providerRow(context, g, expanded: expanded));
+      widgets.add(
+        AnimatedSize(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOutCubic,
+          alignment: Alignment.topCenter,
+          child: expanded
+              ? Padding(
+                  padding: const EdgeInsets.only(left: 18),
+                  child: _modelList(g.value, showProviderSubtitle: false),
+                )
+              : const SizedBox(width: double.infinity),
+        ),
+      );
     }
-    return [
-      _providerHeader(context, _openProvider!),
-      _modelList(models, showProviderSubtitle: false),
-    ];
+    return widgets;
   }
 
-  Widget _providerRow(
-      BuildContext context, MapEntry<String, List<ConfigOptionValue>> group) {
+  Widget _providerRow(BuildContext context,
+      MapEntry<String, List<ConfigOptionValue>> group,
+      {required bool expanded}) {
     final isCurrent =
         group.value.any((v) => v.value == widget.currentModelValue);
     final current = isCurrent
@@ -4005,39 +4208,28 @@ class _ModelPickerSectionState extends State<_ModelPickerSection> {
         size: 18,
         color: isCurrent ? ZColors.primary : ZInk.ghost(context),
       ),
-      title: Text(group.key, style: const TextStyle(fontSize: 13)),
+      title: Text(group.key,
+          style: TextStyle(
+              fontSize: 13,
+              fontWeight: expanded ? FontWeight.w600 : null,
+              color: ZInk.soft(context))),
       subtitle: Text(
         isCurrent && current != null
             ? '当前 · ${current.name}'
             : '${group.value.length} 个模型',
         style: TextStyle(fontSize: 11, color: ZInk.faint(context)),
       ),
-      trailing:
-          Icon(Icons.chevron_right, size: 18, color: ZInk.ghost(context)),
-      onTap: () => setState(() => _openProvider = group.key),
-    );
-  }
-
-  Widget _providerHeader(BuildContext context, String providerKey) {
-    return InkWell(
-      onTap: () => setState(() => _openProvider = null),
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Row(
-          children: [
-            Icon(Icons.arrow_back_ios_new,
-                size: 13, color: ZInk.ghost(context)),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(providerKey,
-                  style: const TextStyle(
-                      fontSize: 13, fontWeight: FontWeight.w600),
-                  overflow: TextOverflow.ellipsis),
-            ),
-          ],
+      trailing: AnimatedRotation(
+        turns: expanded ? 0.25 : 0,
+        duration: const Duration(milliseconds: 200),
+        child: Icon(
+          Icons.chevron_right,
+          size: 18,
+          color: ZInk.ghost(context),
         ),
       ),
+      onTap: () =>
+          setState(() => _openProvider = expanded ? null : group.key),
     );
   }
 
