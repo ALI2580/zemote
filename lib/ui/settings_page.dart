@@ -289,9 +289,9 @@ class SettingsPage extends StatelessWidget {
         Center(
           child: InkWell(
             onTap: () =>
-                _copyUrl(context, 'https://github.com/HumanAILoop/zemote'),
+                _copyUrl(context, 'https://github.com/ALI2580/zemote'),
             child: Text(
-              'GitHub: https://github.com/HumanAILoop/zemote',
+              'GitHub: https://github.com/ALI2580/zemote',
               style: TextStyle(
                 fontSize: 11,
                 color: ZInk.faint(context),

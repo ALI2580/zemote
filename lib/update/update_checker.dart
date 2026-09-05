@@ -38,7 +38,7 @@ class UpdateInfo {
   });
 }
 
-/// Queries `https://api.github.com/repos/HumanAILoop/zemote/releases/latest`
+/// Queries `https://api.github.com/repos/ALI2580/zemote/releases/latest`
 /// and compares the release tag with [currentVersion]. The release tag is
 /// `vX.Y.Z`; the CI uploads one APK and MD5 file per Android ABI.
 Future<UpdateInfo> checkForUpdates({
@@ -51,8 +51,8 @@ Future<UpdateInfo> checkForUpdates({
   final allowBeta =
       includePrerelease ?? updateChannelSettings.receiveBetaUpdates;
   final endpoint = allowBeta
-      ? 'https://api.github.com/repos/HumanAILoop/zemote/releases?per_page=30'
-      : 'https://api.github.com/repos/HumanAILoop/zemote/releases/latest';
+      ? 'https://api.github.com/repos/ALI2580/zemote/releases?per_page=30'
+      : 'https://api.github.com/repos/ALI2580/zemote/releases/latest';
   final res =
       await http.get(Uri.parse(endpoint)).timeout(const Duration(seconds: 15));
   if (res.statusCode != 200) {
@@ -138,7 +138,7 @@ class _ReleaseData {
       tag: tag,
       version: tag.startsWith('v') ? tag.substring(1) : tag,
       url:
-          '${json['html_url'] ?? 'https://github.com/HumanAILoop/zemote/releases'}',
+          '${json['html_url'] ?? 'https://github.com/ALI2580/zemote/releases'}',
       body: json['body'] as String?,
       prerelease: json['prerelease'] == true,
       assets: json['assets'] is List ? json['assets'] as List : const [],

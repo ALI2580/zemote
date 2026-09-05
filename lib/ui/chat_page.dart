@@ -3676,63 +3676,17 @@ class _ModelModeSheet extends StatelessWidget {
                     const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
             const SizedBox(height: 16),
             if (modelOption != null && modelOption.options.isNotEmpty) ...[
-              Text(modelOption.name, style: const TextStyle(fontSize: 13)),
-              const SizedBox(height: 8),
-              for (final v in modelOption.options)
-                ListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  leading: Icon(
-                    currentModelValue == v.value
-                        ? Icons.radio_button_checked
-                        : Icons.radio_button_off,
-                    size: 18,
-                    color: currentModelValue == v.value
-                        ? ZColors.primary
-                        : ZInk.ghost(context),
-                  ),
-                  title: Text(v.name, style: const TextStyle(fontSize: 13)),
-                  subtitle: v.modelProviderName != null
-                      ? Text(v.modelProviderName!,
-                          style: TextStyle(
-                              fontSize: 11, color: ZInk.faint(context)))
-                      : null,
-                  onTap: () {
-                    if (_isDraft) {
-                      onDraftChange?.call('model', v.value);
-                    } else {
-                      final (provider, model) = _splitModelValue(v.value);
-                      // thought must be valid for the target model:
-                      // keep current if supported, else fall back to the
-                      // thought option's currentValue (Turbo: enabled/off)
-                      final currentThought = state?.currentThought ?? '';
-                      final thoughtOpt = prep?.option('thought_level');
-                      final thought = currentThought.isNotEmpty &&
-                              (thoughtOpt?.options
-                                      .any((o) => o.value == currentThought) ??
-                                  false)
-                          ? currentThought
-                          : '${thoughtOpt?.currentValue ?? (currentThought.isNotEmpty ? currentThought : 'enabled')}';
-                      _apply(
-                        context,
-                        () => transport.switchModelConfig(
-                          sid,
-                          provider: provider,
-                          model: model,
-                          thought: thought,
-                        ),
-                        onAccepted: () => state?.optimisticPatch({
-                          'config': {
-                            ...?state!.config,
-                            'provider': provider,
-                            'model': model,
-                            'thought': thought,
-                          },
-                        }),
-                      );
-                    }
-                  },
-                ),
+              _ModelPickerSection(
+                modelOption: modelOption,
+                currentModelValue: currentModelValue,
+                isDraft: _isDraft,
+                state: state,
+                transport: transport,
+                prep: prep,
+                sessionId: sessionId,
+                onDraftChange: onDraftChange,
+                apply: _apply,
+              ),
               const SizedBox(height: 12),
             ] else
               Text('当前模型: ${state?.currentModel ?? ''}',
@@ -3940,6 +3894,221 @@ class _ModelModeSheet extends StatelessWidget {
             .showSnackBar(SnackBar(content: Text('失败: $e')));
       }
     }
+  }
+}
+
+/// Two-level model picker: level 1 lists providers (with model count and the
+/// current model), level 2 lists the chosen provider's models. Falls back to
+/// a flat list when grouping is meaningless (single provider, or every model
+/// carries no provider info).
+class _ModelPickerSection extends StatefulWidget {
+  final ConfigOption modelOption;
+  final String currentModelValue;
+  final bool isDraft;
+  final ConversationState? state;
+  final ConversationTransport transport;
+  final WorkspacePrep? prep;
+  final String? sessionId;
+  final void Function(String key, String value)? onDraftChange;
+  final Future<void> Function(
+    BuildContext context,
+    Future<dynamic> Function() run, {
+    void Function()? onAccepted,
+  }) apply;
+
+  const _ModelPickerSection({
+    required this.modelOption,
+    required this.currentModelValue,
+    required this.isDraft,
+    required this.transport,
+    required this.apply,
+    this.state,
+    this.prep,
+    this.sessionId,
+    this.onDraftChange,
+  });
+
+  @override
+  State<_ModelPickerSection> createState() => _ModelPickerSectionState();
+}
+
+class _ModelPickerSectionState extends State<_ModelPickerSection> {
+  /// Provider currently drilled into; null shows the provider list.
+  String? _openProvider;
+
+  /// 'builtin:zai-coding-plan/GLM-5.2' → 'builtin:zai-coding-plan'
+  static String _providerSegment(String value) {
+    final idx = value.lastIndexOf('/');
+    return idx <= 0 ? value : value.substring(0, idx);
+  }
+
+  /// Prefer the desktop-provided provider name; derive from the value's
+  /// provider segment when it is missing (older desktops).
+  String _providerKeyOf(ConfigOptionValue v) =>
+      v.modelProviderName ?? _providerSegment(v.value);
+
+  /// Provider groups keyed in first-appearance order.
+  Map<String, List<ConfigOptionValue>> get _groups {
+    final groups = <String, List<ConfigOptionValue>>{};
+    for (final v in widget.modelOption.options) {
+      groups.putIfAbsent(_providerKeyOf(v), () => []).add(v);
+    }
+    return groups;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(widget.modelOption.name, style: const TextStyle(fontSize: 13)),
+        const SizedBox(height: 8),
+        ..._buildBody(context),
+      ],
+    );
+  }
+
+  List<Widget> _buildBody(BuildContext context) {
+    final groups = _groups;
+    // Degenerate grouping (single provider, or every model standalone) ->
+    // keep the flat list; a two-level drill-down would add a pointless tap.
+    if (groups.length < 2 ||
+        groups.length >= widget.modelOption.options.length) {
+      return [
+        _modelList(groups.values.expand((m) => m).toList(),
+            showProviderSubtitle: true),
+      ];
+    }
+    final models = _openProvider == null ? null : groups[_openProvider];
+    if (models == null) {
+      return [for (final g in groups.entries) _providerRow(context, g)];
+    }
+    return [
+      _providerHeader(context, _openProvider!),
+      _modelList(models, showProviderSubtitle: false),
+    ];
+  }
+
+  Widget _providerRow(
+      BuildContext context, MapEntry<String, List<ConfigOptionValue>> group) {
+    final isCurrent =
+        group.value.any((v) => v.value == widget.currentModelValue);
+    final current = isCurrent
+        ? group.value.firstWhere((v) => v.value == widget.currentModelValue)
+        : null;
+    return ListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(
+        isCurrent ? Icons.radio_button_checked : Icons.radio_button_off,
+        size: 18,
+        color: isCurrent ? ZColors.primary : ZInk.ghost(context),
+      ),
+      title: Text(group.key, style: const TextStyle(fontSize: 13)),
+      subtitle: Text(
+        isCurrent && current != null
+            ? '当前 · ${current.name}'
+            : '${group.value.length} 个模型',
+        style: TextStyle(fontSize: 11, color: ZInk.faint(context)),
+      ),
+      trailing:
+          Icon(Icons.chevron_right, size: 18, color: ZInk.ghost(context)),
+      onTap: () => setState(() => _openProvider = group.key),
+    );
+  }
+
+  Widget _providerHeader(BuildContext context, String providerKey) {
+    return InkWell(
+      onTap: () => setState(() => _openProvider = null),
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          children: [
+            Icon(Icons.arrow_back_ios_new,
+                size: 13, color: ZInk.ghost(context)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(providerKey,
+                  style: const TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w600),
+                  overflow: TextOverflow.ellipsis),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _modelList(List<ConfigOptionValue> models,
+      {required bool showProviderSubtitle}) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (final v in models) _modelRow(v, showProviderSubtitle),
+      ],
+    );
+  }
+
+  Widget _modelRow(ConfigOptionValue v, bool showProviderSubtitle) {
+    final isCurrent = widget.currentModelValue == v.value;
+    return ListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(
+        isCurrent ? Icons.radio_button_checked : Icons.radio_button_off,
+        size: 18,
+        color: isCurrent ? ZColors.primary : ZInk.ghost(context),
+      ),
+      title: Text(v.name, style: const TextStyle(fontSize: 13)),
+      subtitle: showProviderSubtitle && v.modelProviderName != null
+          ? Text(v.modelProviderName!,
+              style: TextStyle(fontSize: 11, color: ZInk.faint(context)))
+          : null,
+      onTap: () => _selectModel(v),
+    );
+  }
+
+  void _selectModel(ConfigOptionValue v) {
+    if (widget.isDraft) {
+      widget.onDraftChange?.call('model', v.value);
+      return;
+    }
+    final sid = widget.sessionId ?? '';
+    final (provider, model) = _splitPair(v.value);
+    // thought must be valid for the target model: keep current if supported,
+    // else fall back to the thought option's currentValue (Turbo: enabled/off)
+    final currentThought = widget.state?.currentThought ?? '';
+    final thoughtOpt = widget.prep?.option('thought_level');
+    final thought = currentThought.isNotEmpty &&
+            (thoughtOpt?.options.any((o) => o.value == currentThought) ??
+                false)
+        ? currentThought
+        : '${thoughtOpt?.currentValue ?? (currentThought.isNotEmpty ? currentThought : 'enabled')}';
+    widget.apply(
+      context,
+      () => widget.transport.switchModelConfig(
+        sid,
+        provider: provider,
+        model: model,
+        thought: thought,
+      ),
+      onAccepted: () => widget.state?.optimisticPatch({
+        'config': {
+          ...?widget.state!.config,
+          'provider': provider,
+          'model': model,
+          'thought': thought,
+        },
+      }),
+    );
+  }
+
+  static (String, String) _splitPair(String value) {
+    final idx = value.lastIndexOf('/');
+    if (idx <= 0) return (value, value);
+    return (value.substring(0, idx), value.substring(idx + 1));
   }
 }
 

@@ -51,6 +51,10 @@ app.*.map.json
 .remote_url
 /remote_url.txt
 
+# Release signing — never commit keystore or its passwords.
+*.jks
+key.properties
+
 # Local screenshots / scratch
 /screenshots/
 /scratch/
