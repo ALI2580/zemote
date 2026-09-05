@@ -77,3 +77,26 @@
   集成测试用环境变量 `ZEMOTE_PROBE_URL` 注入。
 - 拒绝非 HTTPS/WSS 的连接 URL。
 - 凭据泄露的补救：桌面端重新生成远程控制二维码，旧凭据立即失效。
+
+## 发版与仓库迁移（2026-09-06，v0.5.3 发版实战）
+
+- **发版守护测试是第三处版本常量**（第一次 CI 失败的直接原因）：`update_checker_test.dart`
+  的 "bundled app version matches the release currently being built" 断言 `appVersion` /
+  `appBuildNumber` 的具体值。发版 = 三处一起改：`pubspec.yaml`、`app_version.dart`、
+  该测试。改完 CI 全绿才准打 tag。
+- **比较测试不得依赖 appVersion**：`compareVersions` 语义测试曾把 `appVersion` 混进断言
+  （`compareVersions('0.5.2', appVersion)`），版本一 bump 就崩。已改为字面量，后续发版
+  不再触碰；新增版本测试同理，只测纯函数语义。
+- **仓库指向硬编码四处**：原作者仓库地址曾出现在 `update_checker.dart`（更新检查 API，
+  3 处）、`settings_page.dart`（关于页，2 处）、`README.md`（badges）。迁移/fork 后必须
+  全局替换，否则应用内更新检查打的是别人的 Release API。
+- **文档声称的安全边界要实测**：README 声称 `.gitignore` 已忽略签名文件（`*.jks` /
+  `key.properties`），实际条目缺失（已补）。验证方式：`git check-ignore <路径>`，不要信
+  文档描述。
+- **`keytool -printcert -jarfile` 验不了现代 APK**：Flutter 产物是 v2/v3 签名（无 v1 的
+  META-INF/*.RSA），该命令报"不是已签名的 jar 文件"。验证线上包签名的可行路径：解包
+  APK Signing Block 抠出 DER 证书 → `keytool -printcert -file`；或看构建日志的签名步骤。
+- **CI 绿色 ≠ 正式签名**：Secrets 缺失时 build-apk.yml 只打 WARN 并回退 debug 签名，构建
+  依然成功。重要发版要么确认 Secrets 已配置，要么实拆 APK 验证证书 CN。
+- **tag 强推只允许发生在 Release 生成前**：修 CI 后曾 `tag -f` 重指向新提交并强推——
+  当时 Release 还没产出，安全；一旦 Release 已发布，强推 tag 会造成版本事实分叉，禁止。

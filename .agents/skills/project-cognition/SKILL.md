@@ -69,6 +69,9 @@ Conversation V4 传输层（每 workspace 缓存一份）。
    是反复出现的回归（代码块、状态点、Diff、骨架屏都中过招）。
 9. **凭据安全**：远程控制 URL 的 `sid/hash` 等同设备凭证。永不入库、永不写进测试代码
    （集成测试用 `ZEMOTE_PROBE_URL` 环境变量注入）；仅允许 HTTPS/WSS；Android 禁备份。
+10. **发版三处版本同步**：版本号同时存在于 `pubspec.yaml`、`lib/update/app_version.dart`
+    和守护测试 `test/update_checker_test.dart`（断言 appVersion/appBuildNumber 的具体值，
+    防止发版忘改常量）。三者必须一起改，漏任何一处 CI 必红；这是 0.5.3 发版实际踩过的坑。
 
 ## 代码约定
 

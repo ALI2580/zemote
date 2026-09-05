@@ -61,14 +61,16 @@ setUp(() {
 ## 发布流程（稳定版与 Beta 版）
 
 1. 代码合入 `main`（稳定）或 `beta`（预发布）分支，保证 analyze/test 全绿。
-2. 更新 `pubspec.yaml` 的 `version: X.Y.Z+build`（build 号递增）。
+2. **版本号三处同步**：`pubspec.yaml`（`version: X.Y.Z+build`，build 号递增）、
+   `lib/update/app_version.dart`（更新检查用的常量）、`test/update_checker_test.dart`
+   的守护测试（断言版本与 build 号的具体值）。漏一处 CI 必红。
 3. 按 Keep a Changelog（中文）更新 `CHANGELOG.md`：Added / Changed / Fixed 分类。
 4. 打 tag 并推送：`git tag vX.Y.Z && git push origin vX.Y.Z`。
    Beta 预发布 tag 形如 `vX.Y.Z-beta.N` / `vX.Y.Z-rc.N`（更新检测按 SemVer 预发布规则
    排序，且受"接收 Beta 更新"开关过滤 GitHub Pre-release）。
 5. `build-apk.yml` 自动执行：analyze + test → 从 Secrets 恢复 keystore 签名 →
    构建 3 个 ABI APK（arm64-v8a / armeabi-v7a / x86_64）→ 生成各自 MD5 →
-   上传 GitHub Release。
+   上传 GitHub Release。实测全程约 13 分钟。
 
 ## CI 配置（.github/workflows/）
 
@@ -77,9 +79,26 @@ setUp(() {
 - `build-apk.yml`：`v*` tag 或手动触发 → 签名构建 3 ABI + MD5 → 上传 Release。
   Action 版本用 commit SHA 固定（供应链安全习惯）。
 
-## 签名要点
+## 签名要点（当前仓库 ALI2580/zemote，已配置完成）
 
-- 本地：`android/key.properties` + keystore 文件（均在 `.gitignore` 中）。
-- CI：`ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_PASSWORD` /
-  `ANDROID_KEY_ALIAS` 四个 Secrets；keystore base64 解码到 `android/app/zemote-release.jks`。
-- 签名不一致 = 用户无法覆盖安装 = 更新链路断裂，发版前务必确认 Secrets 存在。
+- 四个 GitHub Secrets 已配置：`ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` /
+  `ANDROID_KEY_PASSWORD` / `ANDROID_KEY_ALIAS=zemote`；gradle 侧本地走
+  `android/key.properties`（git-ignored），CI 走 `ANDROID_*` 环境变量，键名一一对应。
+- **keystore 备份在 `C:\Users\99553\zemote-signing\`**：`zemote-release.jks`（本体）、
+  `.pass`（store/key 密码，两者相同）、`keystore.base64.txt`（Secrets 用）。此密钥决定
+  所有后续版本的覆盖安装链路，丢失后无法弥补——云盘 + 本地各存一份。
+- 证书：`CN=ALI2580, OU=Zemote`，自签名，有效期 10000 天；SHA-1
+  `37:78:91:25:BF:E2:5B:7B:CE:44:62:B6:89:D9:52:D4:28:33:B5:3E`。
+- 与原作者官方版签名不同：装过 HumanAILoop 原版 APK 的设备需先卸载；从本仓库 v0.5.3 起
+  后续版本均可覆盖升级。
+- CI 绿色 ≠ 正式签名：Secrets 缺失时构建只打 WARN 并回退 debug 签名。验证方式见
+  lessons.md（解 APK Signing Block 抠证书，或 `git check-ignore` 确认本地签名文件不入库）。
+
+## 本机开发环境注意事项
+
+- **本机没有 Flutter SDK**（`flutter`/`dart` 均不在 PATH，无 pub cache），源码副本无法
+  本地跑 `flutter analyze` / `flutter test`。Dart 改动的门禁是 CI（push 触发 ci.yml）；
+  本地只能做静态自查：调用点与签名对齐、既有引用无悬空、无新依赖。UI 改动建议配合
+  Web 端或真机手动验证。
+- 本仓库 git 由源码副本新初始化，远程历史是镜像的原作者提交；推送走 SSH
+  （公钥 `zemote-dev-rog-strix` 已注册到 GitHub 账号）。
