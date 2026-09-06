@@ -7,7 +7,6 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import kotlin.math.roundToInt
@@ -31,7 +30,6 @@ class ZemoteNotificationService : Service() {
         // Hex literals above Int.MAX are Long in Kotlin; .toInt() needs a
         // plain val (const val forbids function calls).
         private val COLOR_DONE = 0xFF3B82F6.toInt()
-        private val COLOR_TRACK = 0xFF334155.toInt()
 
         @Volatile
         var instance: ZemoteNotificationService? = null
@@ -101,15 +99,6 @@ class ZemoteNotificationService : Service() {
         )
     }
 
-    private fun buildNotification(title: String, text: String, progress: Double?): Notification {
-        val pending = tapPendingIntent()
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
-            buildLiveUpdate(title, text, progress, pending)
-        } else {
-            buildCompat(title, text, pending)
-        }
-    }
-
     private fun tapPendingIntent(): PendingIntent {
         val tapIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -122,55 +111,31 @@ class ZemoteNotificationService : Service() {
         )
     }
 
-    private fun buildCompat(title: String, text: String, pending: PendingIntent): Notification {
-        return NotificationCompat.Builder(this, CHANNEL_RUNNING)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(title)
-            .setContentText(text)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setContentIntent(pending)
-            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .build()
-    }
-
-    /** Android 16+ Live Update: promoted ongoing + ProgressStyle. */
-    private fun buildLiveUpdate(
-        title: String,
-        text: String,
-        progress: Double?,
-        pending: PendingIntent
-    ): Notification {
-        val style = Notification.ProgressStyle().setColor(COLOR_TRACK)
+    private fun buildNotification(title: String, text: String, progress: Double?): Notification {
+        // androidx compat: ProgressStyle renders natively on Android 16+ (and
+        // gets promoted when the user allows it); older systems degrade to a
+        // plain ongoing notification. setRequestPromotedOngoing is a compat
+        // extra — no framework symbol required to compile.
+        val style = NotificationCompat.ProgressStyle()
         if (progress != null) {
-            // ProgressStyle.setProgress is measured in "segment length units"
-            // (the sum of all segment lengths), NOT 0..100.
-            val total = 100
-            val done = (progress * total).roundToInt().coerceIn(0, total)
-            style.setProgressSegments(
-                listOf(
-                    Notification.ProgressStyle.Segment(total).setColor(COLOR_DONE)
-                )
+            // Compat ProgressStyle max defaults to 100 (getProgressMax()).
+            val done = (progress * 100).roundToInt().coerceIn(0, 100)
+            style.addProgressSegment(
+                NotificationCompat.ProgressStyle.Segment(100).setColor(COLOR_DONE)
             ).setProgress(done)
         } else {
-            style.setProgressSegments(
-                listOf(
-                    Notification.ProgressStyle.Segment(100).setColor(COLOR_DONE)
-                )
-            )
+            style.setProgressIndeterminate(true)
         }
-        return Notification.Builder(this, CHANNEL_RUNNING)
+        return NotificationCompat.Builder(this, CHANNEL_RUNNING)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(text)
             .setStyle(style)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .setContentIntent(pending)
-            .setCategory(Notification.CATEGORY_PROGRESS)
-            .setVisibility(Notification.VISIBILITY_PUBLIC)
+            .setContentIntent(tapPendingIntent())
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setRequestPromotedOngoing(true)
             .build()
     }

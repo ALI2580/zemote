@@ -76,3 +76,10 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // Live Updates (promoted ongoing / ProgressStyle) compat surface.
+    // Newer than Flutter's transitive androidx.core — resolves conflicts by
+    // picking the highest declared version.
+    implementation("androidx.core:core:1.19.0")
+}
