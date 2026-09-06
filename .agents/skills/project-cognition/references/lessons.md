@@ -129,3 +129,28 @@
   残留）都是自查阶段发现修复的，CI 未必能覆盖（无对应 widget 测试）。本机无 Flutter 时
   自查清单：删除符号的残留引用、动画/生命周期组件的挂载周期、跨 key 状态残留、
   闭包捕获的变量作用域、`withValues` 等版本敏感 API 与仓库既有用法一致。
+
+## Android Live Updates 接入（2026-09-06，v0.5.5 实战）
+
+- **framework 的 Live Updates 符号不在 stable SDK 36 里**：`Notification.ProgressStyle`
+  类可解析，但其 `setColor` 与 `Notification.Builder.setRequestPromotedOngoing` 编译报
+  unresolved——它们属于 API 36.1（Baklava QPR，@FlaggedApi）/ 更新层。官方 compose 文档
+  恰好把 compat 方法名写成了 framework 链接，误导性强。**结论：上岛通知一律走 androidx
+  compat，不直接调 framework 符号。**
+- **androidx.core:core:1.18.0 是甜点位**：`NotificationCompat.ProgressStyle` +
+  `Builder.setRequestPromotedOngoing`（写 extra，无 framework 依赖）齐全，minCompileSdk
+  =36。**1.19.x 的 POM 传递依赖 core-ktx 1.19.0，其 AAR metadata 要求 compileSdk 37**，
+  在 `:app:checkReleaseAarMetadata` 阶段直接构建失败。升级 androidx 前先下载 AAR 查
+  aar-metadata.properties 的 minCompileSdk。
+- 验证 API 真实存在性的可靠手段（本机无 Android SDK 时）：从
+  `dl.google.com/android/maven2/androidx/core/core/<v>/core-<v>-sources.jar` 下载源码
+  jar 用 `jar -xf` 解压 grep；framework 事实以 AOSP raw 源码
+  （`aosp-mirror/platform_frameworks_base`）与 CI 编译结果为准，官方文档/diff 页可能
+  空内容或模型补全有误。
+- ProgressStyle 语义：compat 的 progress max 默认 100（`getProgressMax()`），segment
+  长度是相对权重；promoted 需 `setOngoing(true)` + `POST_PROMOTED_NOTIFICATIONS` 权限 +
+  无 customContentView + 非 groupSummary/colorized + 渠道 importance ≥ LOW。用户可在
+  系统设置里关闭某个应用的 promoted 通知（`canPostPromotedNotifications()` 探测）。
+- CI 的 ci.yml（web 冒烟）**不编译 Android**——Kotlin/gradle 改动只有 tag 触发的
+  build-apk.yml 才会真正编译。首次接入原生 API 时预期 1-2 次构建失败是正常的，修复后
+  `tag -f` 重指（Release 未生成的窗口内安全）。
