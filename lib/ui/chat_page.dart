@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -2044,6 +2045,9 @@ class _ExecutionTrace extends StatelessWidget {
         dense: true,
         shape: const Border(),
         collapsedShape: const Border(),
+        // ExpansionTile 默认把 children 水平居中（topCenter），思考行/
+        // 工具行必须与其他操作行一致靠左。
+        childrenAlignment: AlignmentDirectional.topStart,
         tilePadding: const EdgeInsets.symmetric(horizontal: 11),
         leading: Icon(
           _running
@@ -2182,6 +2186,17 @@ class _RowWidget extends StatelessWidget {
                   _editQuery(context);
                 },
               ),
+            ListTile(
+              leading: const Icon(Icons.copy_outlined, size: 20),
+              title: const Text('复制'),
+              onTap: () {
+                Navigator.pop(context);
+                Clipboard.setData(
+                    ClipboardData(text: row['text'] as String? ?? ''));
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                    duration: Duration(seconds: 1), content: Text('已复制')));
+              },
+            ),
             ListTile(
               leading: const Icon(Icons.replay, size: 20),
               title: const Text('重试本轮 (retryTurn)'),
@@ -2338,58 +2353,197 @@ class _UserBubble extends StatelessWidget {
     final attachments = row['attachments'];
     return Align(
       alignment: Alignment.centerRight,
-      child: Container(
-        // Official user bubble (`data-v4-user-input-bubble`): 12px radius
-        // with a 2px top-right corner, surface fill + 10% hairline, 16/12
-        // padding, max-w-xl (576px).
-        constraints: const BoxConstraints(maxWidth: 576),
-        margin: const EdgeInsets.only(left: 56, top: 4, bottom: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          color: ZInk.messageSurface(context),
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(12),
-            topRight: Radius.circular(2),
-            bottomLeft: Radius.circular(12),
-            bottomRight: Radius.circular(12),
-          ),
-          border: Border.all(color: ZInk.messageBorder(context)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            if (attachments is List)
-              for (final a in attachments)
-                if (a is Map)
-                  _AttachmentView(
-                    attachment: a.cast<String, dynamic>(),
-                    transport: transport,
-                    sessionId: sessionId,
-                  ),
-            if (text.isNotEmpty)
-              SelectableText(text,
-                  style: TextStyle(
-                      fontSize: 14, height: 1.5, color: ZInk.solid(context))),
-            if (badge != null)
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(badge!,
-                      style:
-                          TextStyle(fontSize: 10, color: ZInk.faint(context))),
-                  if (onRetry != null)
-                    TextButton(
-                      onPressed: onRetry,
-                      style: TextButton.styleFrom(
-                          padding: const EdgeInsets.only(left: 4),
-                          minimumSize: Size.zero,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-                      child: const Text('重试', style: TextStyle(fontSize: 10)),
-                    ),
-                ],
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Container(
+            // Official user bubble (`data-v4-user-input-bubble`): 12px radius
+            // with a 2px top-right corner, surface fill + 10% hairline, 16/12
+            // padding, max-w-xl (576px).
+            constraints: const BoxConstraints(maxWidth: 576),
+            margin: const EdgeInsets.only(left: 56, top: 4, bottom: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: ZInk.messageSurface(context),
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(12),
+                topRight: Radius.circular(2),
+                bottomLeft: Radius.circular(12),
+                bottomRight: Radius.circular(12),
               ),
-          ],
+              border: Border.all(color: ZInk.messageBorder(context)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                if (attachments is List)
+                  for (final a in attachments)
+                    if (a is Map)
+                      _AttachmentView(
+                        attachment: a.cast<String, dynamic>(),
+                        transport: transport,
+                        sessionId: sessionId,
+                      ),
+                if (text.isNotEmpty)
+                  SelectableText(text,
+                      style: TextStyle(
+                          fontSize: 14,
+                          height: 1.5,
+                          color: ZInk.solid(context))),
+                if (badge != null)
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(badge!,
+                          style: TextStyle(
+                              fontSize: 10, color: ZInk.faint(context))),
+                      if (onRetry != null)
+                        TextButton(
+                          onPressed: onRetry,
+                          style: TextButton.styleFrom(
+                              padding: const EdgeInsets.only(left: 4),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                          child:
+                              const Text('重试', style: TextStyle(fontSize: 10)),
+                        ),
+                    ],
+                  ),
+              ],
+            ),
+          ),
+          // 官方用户消息的操作行（编辑/复制/分叉），气泡下右对齐。
+          _UserActionRow(
+            row: row,
+            transport: transport,
+            sessionId: sessionId,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Small action row under the user bubble: edit & resend / copy / fork —
+/// the explicit counterpart of the official hover actions.
+class _UserActionRow extends StatelessWidget {
+  final Map<String, dynamic> row;
+  final ConversationTransport transport;
+  final String sessionId;
+
+  const _UserActionRow({
+    required this.row,
+    required this.transport,
+    required this.sessionId,
+  });
+
+  Map<String, dynamic> get _target => {
+        'rowId': row['rowId'],
+        if (row['entityId'] != null) 'entityId': row['entityId'],
+      };
+
+  Future<void> _editAndResend(BuildContext context) async {
+    final controller =
+        TextEditingController(text: row['text'] as String? ?? '');
+    final text = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('编辑并重发'),
+        content: TextField(
+          controller: controller,
+          maxLines: 5,
+          decoration: const InputDecoration(border: OutlineInputBorder()),
         ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context), child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, controller.text.trim()),
+              child: const Text('重发')),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (text == null || text.isEmpty || sessionId.isEmpty) return;
+    try {
+      await transport.editUserQuery(sessionId, _target, text);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(duration: Duration(seconds: 1), content: Text('已重发')));
+      }
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('编辑失败，请重试')));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8, top: 2, bottom: 2),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            constraints:
+                const BoxConstraints(minWidth: 30, minHeight: 26),
+            padding: EdgeInsets.zero,
+            iconSize: 14,
+            color: ZInk.faint(context),
+            tooltip: '编辑并重发',
+            icon: const Icon(Icons.edit_outlined),
+            onPressed: () => _editAndResend(context),
+          ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            constraints:
+                const BoxConstraints(minWidth: 30, minHeight: 26),
+            padding: EdgeInsets.zero,
+            iconSize: 14,
+            color: ZInk.faint(context),
+            tooltip: '复制',
+            icon: const Icon(Icons.copy_outlined),
+            onPressed: () {
+              Clipboard.setData(
+                  ClipboardData(text: row['text'] as String? ?? ''));
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                  duration: Duration(seconds: 1), content: Text('已复制')));
+            },
+          ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            constraints:
+                const BoxConstraints(minWidth: 30, minHeight: 26),
+            padding: EdgeInsets.zero,
+            iconSize: 14,
+            color: ZInk.faint(context),
+            tooltip: '分叉',
+            icon: const Icon(Icons.fork_right),
+            onPressed: sessionId.isEmpty
+                ? null
+                : () {
+                    transport
+                        .forkAssistant(sessionId, _target)
+                        .then((_) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                                duration: Duration(seconds: 2),
+                                content: Text('已分叉，新会话在任务列表中')));
+                      }
+                    }).catchError((Object _) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                                content: Text('分叉失败，请重试')));
+                      }
+                    });
+                  },
+          ),
+        ],
       ),
     );
   }
@@ -2543,6 +2697,17 @@ class _AssistantBubble extends StatelessWidget {
                   )
                 else ...[
                   _FeedbackButton(
+                    icon: Icons.copy_outlined,
+                    active: false,
+                    onTap: () {
+                      Clipboard.setData(ClipboardData(text: text));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                              duration: Duration(seconds: 1),
+                              content: Text('已复制')));
+                    },
+                  ),
+                  _FeedbackButton(
                     icon: Icons.thumb_up_alt_outlined,
                     active: feedback == 'like',
                     onTap: () =>
@@ -2553,6 +2718,31 @@ class _AssistantBubble extends StatelessWidget {
                     active: feedback == 'dislike',
                     onTap: () =>
                         _setFeedback(feedback == 'dislike' ? null : 'dislike'),
+                  ),
+                  _FeedbackButton(
+                    icon: Icons.fork_right,
+                    active: false,
+                    onTap: () {
+                      if (sessionId.isEmpty) return;
+                      transport
+                          .forkAssistant(sessionId, {
+                        'rowId': row['rowId'],
+                        if (row['entityId'] != null) 'entityId': row['entityId'],
+                      })
+                          .then((_) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                  duration: Duration(seconds: 2),
+                                  content: Text('已分叉，新会话在任务列表中')));
+                        }
+                      }).catchError((Object _) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('分叉失败，请重试')));
+                        }
+                      });
+                    },
                   ),
                 ],
               ],
@@ -2598,29 +2788,68 @@ class _ReasoningTile extends StatefulWidget {
 class _ReasoningTileState extends State<_ReasoningTile> {
   bool _expanded = false;
 
+  /// Chevron shows on toggle and fades out after a few seconds (the official
+  /// client reveals it on hover; mobile has no hover, so it appears on
+  /// interaction instead). While streaming it stays visible.
+  bool _chevronVisible = false;
+  Timer? _chevronTimer;
+
+  static const _chevronFade = Duration(seconds: 3);
+
   @override
   void initState() {
     super.initState();
     _expanded = widget.streaming;
+    _chevronVisible = widget.streaming;
   }
 
   @override
   void didUpdateWidget(_ReasoningTile oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.streaming && !oldWidget.streaming) _expanded = true;
+    if (widget.streaming && !oldWidget.streaming) {
+      setState(() {
+        _expanded = true;
+        _chevronVisible = true;
+      });
+    }
+    if (!widget.streaming && oldWidget.streaming) {
+      _scheduleChevronFade();
+    }
+  }
+
+  void _toggle() {
+    setState(() {
+      _expanded = !_expanded;
+      _chevronVisible = true;
+    });
+    _scheduleChevronFade();
+  }
+
+  void _scheduleChevronFade() {
+    if (widget.streaming) return;
+    _chevronTimer?.cancel();
+    _chevronTimer = Timer(_chevronFade, () {
+      if (mounted) setState(() => _chevronVisible = false);
+    });
+  }
+
+  @override
+  void dispose() {
+    _chevronTimer?.cancel();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     // 官方思考块（浅色实测）：无底色无框的一行灰字「图标 思考 · 时长」，
-    // 展开后内容挂在浅灰左竖线下。
+    // 展开后内容挂在浅灰左竖线下；chevron 仅在操作后短暂出现。
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           InkWell(
-            onTap: () => setState(() => _expanded = !_expanded),
+            onTap: _toggle,
             borderRadius: BorderRadius.circular(6),
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 2),
@@ -2649,11 +2878,15 @@ class _ReasoningTileState extends State<_ReasoningTile> {
                             fontSize: 13, color: ZInk.muted(context))),
                   ],
                   const SizedBox(width: 6),
-                  AnimatedRotation(
-                    turns: _expanded ? 0.25 : 0,
-                    duration: const Duration(milliseconds: 150),
-                    child: Icon(Icons.expand_more,
-                        size: 15, color: ZInk.faint(context)),
+                  AnimatedOpacity(
+                    opacity: _chevronVisible ? 1 : 0,
+                    duration: const Duration(milliseconds: 250),
+                    child: AnimatedRotation(
+                      turns: _expanded ? 0.5 : 0,
+                      duration: const Duration(milliseconds: 150),
+                      child: Icon(Icons.expand_more,
+                          size: 15, color: ZInk.faint(context)),
+                    ),
                   ),
                 ],
               ),
