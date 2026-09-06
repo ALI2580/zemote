@@ -100,3 +100,32 @@
   依然成功。重要发版要么确认 Secrets 已配置，要么实拆 APK 验证证书 CN。
 - **tag 强推只允许发生在 Release 生成前**：修 CI 后曾 `tag -f` 重指向新提交并强推——
   当时 Release 还没产出，安全；一旦 Release 已发布，强推 tag 会造成版本事实分叉，禁止。
+
+## 交互实现模式（2026-09-06，v0.5.4 实战）
+
+- **流式列表滚动拉扯的根因是距离启发式**：旧代码 `pixels > max - 400` 就跟随——流式输出
+  时 `maxScrollExtent` 持续增长，静态阈值反复成立，每帧把翻历史的用户往回拽；且普通
+  controller 监听分不清用户拖动与程序动画，动画本身又会把 `pixels` 拉回阈值内形成循环。
+  正确模式：`_onScroll` 只在 `userScrollDirection != ScrollDirection.idle`（用户拖动/惯性）
+  时更新吸底标志（`animateTo` 的 DrivenScrollActivity 期间恒为 idle），跟随只在吸底时执行；
+  `ScrollDirection` 需从 `package:flutter/rendering.dart` 导入。判定用"距底部 40px"只在
+  **用户滚动时**比较一次，不参与跟随决策。
+- **AnimatedSize 必须常驻挂载**：条件渲染 `if (expanded) AnimatedSize(...)` 会让收起动画
+  永远不生效——收起时组件连同动画一起被移除，内容瞬跳。手风琴标准写法：每个分组的
+  动画容器常驻，child 在"内容"与"零高度盒"（`SizedBox(width: double.infinity)`）之间切换，
+  靠 child 尺寸变化驱动展开与收起两个方向的动画。
+- **缓存类状态要清理"旧 key"**：输入框草稿按 sessionId 缓存、新会话按 workspaceKey 缓存。
+  首条消息发送后 sessionId 从 null 变为真实 id，若不清旧 key，返回再新建会话会冒出已发送
+  的内容。模式：会话创建成功时显式 `cache.remove(旧key)`，发送清空控制器会自动写空新 key。
+- **宽屏断点用 640dp，别用 800/840**：折叠屏内屏展开宽度约 717dp，840 阈值会把它漏进
+  窄屏路径。辅助对话侧滑面板实现：`showGeneralDialog` + `Align(centerRight)` +
+  `SlideTransition`（barrierDismissible 点遮罩关闭），ChatPage 可作为普通组件嵌入面板
+  （嵌套 Scaffold 合法，ScaffoldMessenger 走根 messenger）。面板宽度
+  `(width * 0.55).clamp(360, 560)`。
+- **StatelessWidget 的辅助方法访问不到 build 局部变量**：`_modeChip` 最初引用 build 里的
+  `sid` 直接编译失败——类方法只能访问字段。要么把值当参数传，要么改用类字段
+  （`sessionId ?? ''`）。列表项内需要新 context 时用 `Builder(builder: (context) ...)` 包裹。
+- **无 SDK 静态自查抓到过真 bug**：0.5.4 的两个缺陷（手风琴收起动画不生效、草稿旧 key
+  残留）都是自查阶段发现修复的，CI 未必能覆盖（无对应 widget 测试）。本机无 Flutter 时
+  自查清单：删除符号的残留引用、动画/生命周期组件的挂载周期、跨 key 状态残留、
+  闭包捕获的变量作用域、`withValues` 等版本敏感 API 与仓库既有用法一致。

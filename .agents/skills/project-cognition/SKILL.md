@@ -72,6 +72,10 @@ Conversation V4 传输层（每 workspace 缓存一份）。
 10. **发版三处版本同步**：版本号同时存在于 `pubspec.yaml`、`lib/update/app_version.dart`
     和守护测试 `test/update_checker_test.dart`（断言 appVersion/appBuildNumber 的具体值，
     防止发版忘改常量）。三者必须一起改，漏任何一处 CI 必红；这是 0.5.3 发版实际踩过的坑。
+11. **流式列表滚动判定只用用户驱动**：消息列表的吸底/取消吸底只由用户真实拖动或惯性滚动
+    更新（`userScrollDirection != ScrollDirection.idle`，程序 `animateTo` 期间恒为 idle），
+    跟随只在吸底时执行。禁止重新引入"接近底部 N 像素即跟随"的距离启发式——流式输出时
+    maxScrollExtent 持续增长，任何静态阈值都会把正在翻历史的用户往下拽（0.5.4 修过的坑）。
 
 ## 代码约定
 

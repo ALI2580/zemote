@@ -71,6 +71,8 @@ setUp(() {
 5. `build-apk.yml` 自动执行：analyze + test → 从 Secrets 恢复 keystore 签名 →
    构建 3 个 ABI APK（arm64-v8a / armeabi-v7a / x86_64）→ 生成各自 MD5 →
    上传 GitHub Release。实测全程约 13 分钟。
+6. **顺序纪律（0.5.4 验证零返工）**：先推 `main` 等 ci.yml 全绿，再打 tag——0.5.3 因
+   tag 抢在测试修复前推送，导致一次失败的 Release 构建。严格按本清单执行可一次通过。
 
 ## CI 配置（.github/workflows/）
 
