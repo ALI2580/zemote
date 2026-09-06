@@ -6,7 +6,7 @@ import 'theme.dart';
 /// Groups model options by provider, preserving first-appearance order.
 /// Key prefers the desktop-provided `modelProviderName`; falls back to the
 /// provider segment of the value (`builtin:plan/GLM-5.2` → `builtin:plan`).
-LinkedHashMap<String, List<ConfigOptionValue>> groupModelOptions(
+Map<String, List<ConfigOptionValue>> groupModelOptions(
     List<ConfigOptionValue> options) {
   String keyOf(ConfigOptionValue v) {
     if (v.modelProviderName != null && v.modelProviderName!.isNotEmpty) {
