@@ -19,6 +19,12 @@ class TaskNotifier {
   SessionsIndexSubscription? _sub;
   Map<String, String> _prevPhases = {};
   final Set<String> _notifiedInteractions = {};
+
+  /// Tasks seen during THIS foreground-service cycle (0.5.5): drives the
+  /// Live Updates progress bar (completed / seen). Reset when no tasks run.
+  final Set<String> _seenTaskIds = {};
+  final Set<String> _doneTaskIds = {};
+
   bool _active = false;
   bool _disposed = false;
   bool _permissionChecked = false;
@@ -67,6 +73,7 @@ class TaskNotifier {
     _prevPhases = {for (final e in sub.state.list) e.sessionId: e.phase};
 
     for (final c in update.completed) {
+      _doneTaskIds.add(c.taskId);
       _safe(notifications.notifyTaskCompleted(
         title: '任务完成',
         text: c.preview.trim().isEmpty ? c.title : '${c.title}\n${c.preview}',
@@ -85,9 +92,14 @@ class TaskNotifier {
 
     if (update.hasRunning) {
       _ensurePermission();
+      for (final r in update.running) {
+        _seenTaskIds.add(r.taskId);
+      }
       _scheduleForeground(update.running);
     } else {
       _trailingTimer?.cancel();
+      _seenTaskIds.clear();
+      _doneTaskIds.clear();
       _safe(notifications.stopForeground());
     }
   }
@@ -119,7 +131,12 @@ class TaskNotifier {
     final title = '${running.length} 个任务运行中';
     var text = formatRunningText(running);
     if (text.length > 600) text = '${text.substring(0, 597)}…';
-    _safe(notifications.updateForeground(title, text));
+    // Live Updates progress: fraction of this cycle's tasks that finished.
+    // Only meaningful with multiple tasks; a lone task shows an activity bar.
+    final seen = _seenTaskIds.length;
+    final done = _doneTaskIds.intersection(_seenTaskIds).length;
+    final progress = (seen > 1 && done > 0 && done < seen) ? done / seen : null;
+    _safe(notifications.updateForeground(title, text, progress: progress));
   }
 
   Future<void> _handleTap(Map<String, dynamic> payload) async {

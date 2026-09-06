@@ -7,27 +7,41 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import kotlin.math.roundToInt
 
 /**
  * Keeps the process + relay alive while the app is backgrounded and shows the
  * ongoing "running tasks" notification. Content is updated via
  * [update] whenever the monitor publishes a new snapshot.
+ *
+ * On Android 16+ (ColorOS 16 流体云 / promoted ongoing) the notification is
+ * built as a Live Update: `setRequestPromotedOngoing` + `ProgressStyle`, so
+ * the system promotes it to the status chip / lock screen / drawer top.
+ * [progress] (0..1) drives the ProgressStyle bar; null renders an activity
+ * bar (indeterminate).
  */
 class ZemoteNotificationService : Service() {
     companion object {
         const val CHANNEL_RUNNING = "running_tasks"
         const val NOTIFICATION_ID = 1001
 
+        // Hex literals above Int.MAX are Long in Kotlin; .toInt() needs a
+        // plain val (const val forbids function calls).
+        private val COLOR_DONE = 0xFF3B82F6.toInt()
+        private val COLOR_TRACK = 0xFF334155.toInt()
+
         @Volatile
         var instance: ZemoteNotificationService? = null
             private set
 
-        fun start(context: Context, title: String, text: String) {
+        fun start(context: Context, title: String, text: String, progress: Double?) {
             val intent = Intent(context, ZemoteNotificationService::class.java)
                 .putExtra("title", title)
                 .putExtra("text", text)
+            if (progress != null) intent.putExtra("progress", progress)
             context.startForegroundService(intent)
         }
     }
@@ -46,16 +60,19 @@ class ZemoteNotificationService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val title = intent?.getStringExtra("title") ?: "任务运行中"
         val text = intent?.getStringExtra("text") ?: ""
-        startForeground(NOTIFICATION_ID, buildNotification(title, text))
+        val progress =
+            if (intent?.hasExtra("progress") == true) intent.getDoubleExtra("progress", 0.0)
+            else null
+        startForeground(NOTIFICATION_ID, buildNotification(title, text, progress))
         return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     /** Update the ongoing notification in place (no re-alert). */
-    fun update(title: String, text: String) {
+    fun update(title: String, text: String, progress: Double?) {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(NOTIFICATION_ID, buildNotification(title, text))
+        nm.notify(NOTIFICATION_ID, buildNotification(title, text, progress))
     }
 
     private fun createChannels() {
@@ -84,16 +101,28 @@ class ZemoteNotificationService : Service() {
         )
     }
 
-    private fun buildNotification(title: String, text: String): Notification {
+    private fun buildNotification(title: String, text: String, progress: Double?): Notification {
+        val pending = tapPendingIntent()
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
+            buildLiveUpdate(title, text, progress, pending)
+        } else {
+            buildCompat(title, text, pending)
+        }
+    }
+
+    private fun tapPendingIntent(): PendingIntent {
         val tapIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
-        val pending = PendingIntent.getActivity(
+        return PendingIntent.getActivity(
             this,
             0,
             tapIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+    }
+
+    private fun buildCompat(title: String, text: String, pending: PendingIntent): Notification {
         return NotificationCompat.Builder(this, CHANNEL_RUNNING)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
@@ -104,6 +133,45 @@ class ZemoteNotificationService : Service() {
             .setContentIntent(pending)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .build()
+    }
+
+    /** Android 16+ Live Update: promoted ongoing + ProgressStyle. */
+    private fun buildLiveUpdate(
+        title: String,
+        text: String,
+        progress: Double?,
+        pending: PendingIntent
+    ): Notification {
+        val style = Notification.ProgressStyle().setColor(COLOR_TRACK)
+        if (progress != null) {
+            // ProgressStyle.setProgress is measured in "segment length units"
+            // (the sum of all segment lengths), NOT 0..100.
+            val total = 100
+            val done = (progress * total).roundToInt().coerceIn(0, total)
+            style.setProgressSegments(
+                listOf(
+                    Notification.ProgressStyle.Segment(total).setColor(COLOR_DONE)
+                )
+            ).setProgress(done)
+        } else {
+            style.setProgressSegments(
+                listOf(
+                    Notification.ProgressStyle.Segment(100).setColor(COLOR_DONE)
+                )
+            )
+        }
+        return Notification.Builder(this, CHANNEL_RUNNING)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(style)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setContentIntent(pending)
+            .setCategory(Notification.CATEGORY_PROGRESS)
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
+            .setRequestPromotedOngoing(true)
             .build()
     }
 }

@@ -48,12 +48,21 @@ class Notifications {
     _tapHandler = h;
   }
 
-  Future<void> startForeground(String title, String text) =>
-      _channel.invokeMethod('startForeground', {'title': title, 'text': text});
+  /// [progress] (0..1) feeds the Android 16 Live Updates progress bar
+  /// (ColorOS 16 流体云). Null renders an indeterminate activity bar.
+  Future<void> startForeground(String title, String text, {double? progress}) =>
+      _channel.invokeMethod('startForeground', {
+        'title': title,
+        'text': text,
+        if (progress != null) 'progress': progress,
+      });
 
-  Future<void> updateForeground(String title, String text) =>
-      _channel.invokeMethod(
-          'updateForeground', {'title': title, 'text': text});
+  Future<void> updateForeground(String title, String text, {double? progress}) =>
+      _channel.invokeMethod('updateForeground', {
+        'title': title,
+        'text': text,
+        if (progress != null) 'progress': progress,
+      });
 
   Future<void> stopForeground() => _channel.invokeMethod('stopForeground');
 

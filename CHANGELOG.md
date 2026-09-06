@@ -2,6 +2,13 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.5.5] - 2026-09-06
+
+### Added
+- **ColorOS 16 流体云上岛（Android 16 Live Updates）**：任务运行中的常驻通知升级为 promoted ongoing——状态栏 status chip、通知抽屉顶部置顶、锁屏显著展示；任务进度以 `ProgressStyle` 彩色进度条呈现。
+- 多任务并发时进度条显示"已完成 / 本轮出现任务数"的真实比例；单任务运行时展示活动条。老系统（Android 16 以下）保持原有常驻通知形态，两套自动切换。
+- 声明 `POST_PROMOTED_NOTIFICATIONS` 权限；`compileSdk` 固定为 36 以使用 Live Updates API。
+
 ## [0.5.4] - 2026-09-06
 
 ### Added

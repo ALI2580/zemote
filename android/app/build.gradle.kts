@@ -20,7 +20,9 @@ fun propOrEnv(name: String): String? =
 
 android {
     namespace = "app.zemote"
-    compileSdk = flutter.compileSdkVersion
+    // Pinned (not flutter.compileSdkVersion): Android 16 Live Updates APIs
+    // (Notification.ProgressStyle / setRequestPromotedOngoing) need SDK 36.
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

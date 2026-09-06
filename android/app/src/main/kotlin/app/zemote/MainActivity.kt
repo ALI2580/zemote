@@ -62,19 +62,21 @@ class MainActivity : FlutterActivity() {
                     ZemoteNotificationService.start(
                         this,
                         call.argument<String>("title") ?: "任务运行中",
-                        call.argument<String>("text") ?: ""
+                        call.argument<String>("text") ?: "",
+                        (call.argument<Any?>("progress")) as? Double
                     )
                     result.success(true)
                 }
                 "updateForeground" -> {
                     val title = call.argument<String>("title") ?: "任务运行中"
                     val text = call.argument<String>("text") ?: ""
+                    val progress = (call.argument<Any?>("progress")) as? Double
                     val service = ZemoteNotificationService.instance
                     if (service != null) {
-                        service.update(title, text)
+                        service.update(title, text, progress)
                         result.success(true)
                     } else {
-                        ZemoteNotificationService.start(this, title, text)
+                        ZemoteNotificationService.start(this, title, text, progress)
                         result.success(true)
                     }
                 }
