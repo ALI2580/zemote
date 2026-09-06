@@ -2585,51 +2585,94 @@ class _FeedbackButton extends StatelessWidget {
   }
 }
 
-class _ReasoningTile extends StatelessWidget {
+class _ReasoningTile extends StatefulWidget {
   final String text;
   final bool streaming;
 
   const _ReasoningTile({required this.text, this.streaming = false});
 
   @override
+  State<_ReasoningTile> createState() => _ReasoningTileState();
+}
+
+class _ReasoningTileState extends State<_ReasoningTile> {
+  bool _expanded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _expanded = widget.streaming;
+  }
+
+  @override
+  void didUpdateWidget(_ReasoningTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.streaming && !oldWidget.streaming) _expanded = true;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      decoration: BoxDecoration(
-        color: ZInk.messageSurface(context),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: ZInk.messageBorder(context)),
-      ),
-      child: ExpansionTile(
-        initiallyExpanded: streaming,
-        dense: true,
-        shape: const Border(),
-        collapsedShape: const Border(),
-        iconColor: ZColors.trajectoryReasoning,
-        collapsedIconColor: ZInk.muted(context),
-        tilePadding: const EdgeInsets.symmetric(horizontal: 12),
-        title: Row(
-          children: [
-            Icon(Icons.psychology_outlined,
-                size: 14,
-                color: streaming
-                    ? ZColors.running
-                    : ZColors.trajectoryReasoning),
-            const SizedBox(width: 6),
-            Text(
-              streaming ? '思考中…' : '思考',
-              style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: ZInk.solid(context)),
-            ),
-          ],
-        ),
+    // 官方思考块（浅色实测）：无底色无框的一行灰字「图标 思考 · 时长」，
+    // 展开后内容挂在浅灰左竖线下。
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-            child: ZemoteMarkdown(text, fontSize: 12),
+          InkWell(
+            onTap: () => setState(() => _expanded = !_expanded),
+            borderRadius: BorderRadius.circular(6),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.psychology_outlined,
+                      size: 14,
+                      color: widget.streaming
+                          ? ZColors.running
+                          : ZInk.faint(context)),
+                  const SizedBox(width: 7),
+                  Text(
+                    widget.streaming ? '思考中…' : '思考',
+                    style: TextStyle(
+                        fontSize: 13, color: ZInk.muted(context)),
+                  ),
+                  if (!widget.streaming) ...[
+                    const SizedBox(width: 7),
+                    Text('·',
+                        style: TextStyle(
+                            fontSize: 12, color: ZInk.faint(context))),
+                    const SizedBox(width: 7),
+                    Text('持续了几秒',
+                        style: TextStyle(
+                            fontSize: 13, color: ZInk.muted(context))),
+                  ],
+                  const SizedBox(width: 6),
+                  AnimatedRotation(
+                    turns: _expanded ? 0.25 : 0,
+                    duration: const Duration(milliseconds: 150),
+                    child: Icon(Icons.expand_more,
+                        size: 15, color: ZInk.faint(context)),
+                  ),
+                ],
+              ),
+            ),
           ),
+          if (_expanded)
+            Padding(
+              padding: const EdgeInsets.only(top: 4, left: 8),
+              child: Container(
+                padding: const EdgeInsets.only(left: 10),
+                decoration: BoxDecoration(
+                  border: Border(
+                    left: BorderSide(
+                        width: 2, color: ZInk.messageBorder(context)),
+                  ),
+                ),
+                child: ZemoteMarkdown(widget.text, fontSize: 12),
+              ),
+            ),
         ],
       ),
     );
@@ -2658,8 +2701,8 @@ class _ToolCallTileState extends State<_ToolCallTile> {
         status == 'pendingApproval';
   }
 
-  /// Official kind labels (`chat.toolCall.kind.*`) — the header shows a
-  /// localized kind, falling back to the raw tool name.
+  /// Official kind labels — 「终端」 verified against the real light-theme
+  /// web client (shell family), others from `chat.toolCall.kind.*`.
   static const _kindLabels = {
     'Read': '读取',
     'Write': '写入',
@@ -2670,24 +2713,26 @@ class _ToolCallTileState extends State<_ToolCallTile> {
     'Glob': '搜索',
     'WebFetch': '搜索',
     'WebSearch': '搜索',
-    'Bash': '命令',
+    'Bash': '终端',
     'TodoWrite': '待办',
     'Task': '任务',
   };
 
-  /// Official status labels (`chat.toolCall.status.*`).
-  static const _statusLabels = {
-    'pending': '等待中',
-    'pendingApproval': '等待确认',
-    'inputStreaming': '执行中',
-    'running': '执行中',
-    'success': '已执行',
-    'completed': '已执行',
-    'error': '执行失败',
-    'failed': '执行失败',
-    'cancelled': '已停止',
-    'denied': '已拒绝',
-    'stopped': '已停止',
+  /// Per-family icons like the official web client (terminal / magnifier /
+  /// pencil in the real rendering).
+  static const _kindIcons = {
+    'Read': Icons.search,
+    'Grep': Icons.search,
+    'WebSearch': Icons.travel_explore,
+    'WebFetch': Icons.language,
+    'Write': Icons.edit_outlined,
+    'Edit': Icons.edit_outlined,
+    'MultiEdit': Icons.edit_outlined,
+    'NotebookEdit': Icons.edit_outlined,
+    'Bash': Icons.terminal,
+    'Glob': Icons.folder_open,
+    'TodoWrite': Icons.checklist,
+    'Task': Icons.account_tree_outlined,
   };
 
   String get _kindLabel {
@@ -2720,9 +2765,16 @@ class _ToolCallTileState extends State<_ToolCallTile> {
     return one.length > 60 ? '${one.substring(0, 60)}…' : one;
   }
 
-  (String, Color) _statusLabel(BuildContext context) {
+  (String?, Color) _statusLabel(BuildContext context) {
     final status = widget.row['status'] as String? ?? '';
-    final label = _statusLabels[status] ?? status;
+    // 官方完成态不显示状态文字（浅色实测），只有进行中/失败/待确认才出现。
+    final label = switch (status) {
+      'running' || 'inputStreaming' => '执行中',
+      'pendingApproval' => '等待确认',
+      'pending' => '等待中',
+      'error' || 'failed' => '执行失败',
+      _ => null,
+    };
     final color = switch (status) {
       'running' || 'inputStreaming' => ZColors.running,
       'pendingApproval' => ZColors.warning,
@@ -2755,6 +2807,23 @@ class _ToolCallTileState extends State<_ToolCallTile> {
             display['images'] is List);
     final primary = _primaryText;
     final (statusLabel, statusColor) = _statusLabel(context);
+    final toolName = row['toolName'] as String? ?? '';
+    final kindIcon = _kindIcons[toolName] ?? Icons.build_outlined;
+
+    // 编辑/写入行的 +/- 行数角标（官方 diffCount）。
+    var added = 0, removed = 0;
+    if (diff != null) {
+      for (final line in diff.lines) {
+        switch (line.type) {
+          case DiffLineType.added:
+            added++;
+          case DiffLineType.removed:
+            removed++;
+          case DiffLineType.context:
+            break;
+        }
+      }
+    }
 
     final images = display is Map &&
             display['kind'] == 'node_repl_images' &&
@@ -2762,14 +2831,16 @@ class _ToolCallTileState extends State<_ToolCallTile> {
         ? display['images'] as List
         : const [];
 
-    // 官方 ToolLayout（A7e/O7e）是无卡片容器的行式布局：图标 + kind 标签 +
-    // 摘要 + 状态，全部 subtle 灰，点击展开详情（pt-2），失败态红色加重。
+    // 官方 ToolLayout（浅色实测）：无卡片容器的单行灰字——专属图标 +
+    // kind 标签 + `·` + 摘要（+ diff 计数），完成态无状态文字，整行
+    // 点击展开左竖线详情。
     final header = Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
-          Icon(_iconFor(status),
-              size: 14, color: running ? ZColors.running : ZInk.faint(context)),
+          Icon(kindIcon,
+              size: 14,
+              color: running ? ZColors.running : ZInk.faint(context)),
           const SizedBox(width: 7),
           Text(
             _kindLabel,
@@ -2784,30 +2855,46 @@ class _ToolCallTileState extends State<_ToolCallTile> {
             Text('·', style: TextStyle(fontSize: 12, color: ZInk.faint(context))),
             const SizedBox(width: 7),
             Expanded(
-              child: Text(
-                primary,
-                style: TextStyle(fontSize: 13, color: ZInk.muted(context)),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+              child: Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      primary,
+                      style: TextStyle(fontSize: 13, color: ZInk.muted(context)),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (added > 0 || removed > 0) ...[
+                    const SizedBox(width: 8),
+                    Text('+$added',
+                        style: TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 12,
+                            color: ZInk.diffAdded(context))),
+                    const SizedBox(width: 5),
+                    Text('-$removed',
+                        style: TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 12,
+                            color: ZInk.diffRemoved(context))),
+                  ],
+                ],
               ),
             ),
           ] else
             const Spacer(),
-          if (statusLabel.isNotEmpty)
+          if (statusLabel != null)
             Padding(
               padding: const EdgeInsets.only(left: 7),
               child: Text(statusLabel,
                   style: TextStyle(fontSize: 12, color: statusColor)),
             ),
-          if (hasDetails)
+          if (hasDetails && _expanded)
             Padding(
               padding: const EdgeInsets.only(left: 5),
-              child: AnimatedRotation(
-                turns: _expanded ? 0.25 : 0,
-                duration: const Duration(milliseconds: 150),
-                child: Icon(Icons.chevron_right,
-                    size: 16, color: ZInk.faint(context)),
-              ),
+              child: Icon(Icons.expand_less,
+                  size: 15, color: ZInk.faint(context)),
             ),
         ],
       ),
@@ -2879,15 +2966,6 @@ class _ToolCallTileState extends State<_ToolCallTile> {
       ),
     );
   }
-
-  IconData _iconFor(String status) => switch (status) {
-        'running' || 'inputStreaming' => Icons.hourglass_top,
-        'success' || 'completed' => Icons.check,
-        'error' || 'failed' => Icons.error_outline,
-        'cancelled' || 'stopped' => Icons.block,
-        'pendingApproval' => Icons.privacy_tip_outlined,
-        _ => Icons.build_outlined,
-      };
 
   Widget _kv(BuildContext context, String label, String value) {
     Object? structured;
