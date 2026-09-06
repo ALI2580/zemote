@@ -12,6 +12,7 @@ import '../state/log_store.dart';
 import 'composer_menu.dart';
 import 'diff_view.dart';
 import 'markdown_view.dart';
+import 'mention_menu.dart';
 import 'theme.dart';
 import 'structured_data_view.dart';
 import '../voice/voice_model_store.dart';
@@ -229,6 +230,16 @@ class _ChatPageState extends State<ChatPage> {
 
   bool _loadingOlder = false;
   bool _showSlash = false;
+
+  /// Composer mention state (`@` files / `#` sessions). The trigger token is
+  /// the word ending at the cursor: `@query` / `#query` after line start or
+  /// whitespace (official rule `(^|\s)[/@$#]`). Null trigger = menu closed.
+  String? _mentionTrigger;
+  String _mentionQuery = '';
+  List<MentionItem>? _mentionFiles;
+  bool _mentionFilesFailed = false;
+  List<MentionItem>? _mentionSessions;
+  SessionsIndexSubscription? _mentionSessionsSub;
   String? _progress;
   final List<_PendingFile> _pendingFiles = [];
   double? _uploadProgress;
@@ -279,6 +290,130 @@ class _ChatPageState extends State<ChatPage> {
       if (show != _showSlash && mounted) {
         setState(() => _showSlash = show);
       }
+      _updateMentionState(text);
+    });
+  }
+
+  /// Recomputes the mention trigger from the text ending at the cursor.
+  /// `@`/`#` must follow line start or whitespace (official rule), and the
+  /// query carries no whitespace of its own. Fires only on state change.
+  void _updateMentionState(String text) {
+    String? trigger;
+    var query = '';
+    final sel = _inputController.selection;
+    if (sel.isValid &&
+        sel.baseOffset >= 0 &&
+        sel.baseOffset <= text.length) {
+      final before = text.substring(0, sel.baseOffset);
+      final m = RegExp(r'(?:^|\s)([@#])([^\s@#]*)$').firstMatch(before);
+      if (m != null) {
+        trigger = m.group(1);
+        query = m.group(2) ?? '';
+      }
+    }
+    if (trigger == _mentionTrigger && query == _mentionQuery) return;
+    if (mounted) {
+      setState(() {
+        _mentionTrigger = trigger;
+        _mentionQuery = query;
+      });
+    }
+    if (trigger != null) _ensureMentionData(trigger);
+  }
+
+  /// Lazily loads the mention data sources. Sources degrade independently:
+  /// a failed directory listing only hides the files section, never the
+  /// sessions or skills sections (double-source independence, lesson #4).
+  void _ensureMentionData(String trigger) {
+    if (trigger == '@' && _mentionFiles == null && !_mentionFilesFailed) {
+      _loadMentionFiles();
+    }
+    if (_mentionSessions == null) _loadMentionSessions();
+  }
+
+  Future<void> _loadMentionFiles() async {
+    try {
+      final root = _transport.scope['workspacePath'];
+      if (root is! String || root.isEmpty) throw StateError('no workspacePath');
+      final entries = await _transport.readdir(root, includeHidden: false);
+      if (!mounted) return;
+      final items = <MentionItem>[];
+      for (final e in entries) {
+        final name = '${e['name'] ?? e['fileName'] ?? e['path'] ?? ''}';
+        if (name.isEmpty || name == '.' || name == '..') continue;
+        final isDir = e['isDirectory'] == true ||
+            e['isDir'] == true ||
+            e['type'] == 'directory';
+        // 相对 workspace 根的路径注入（官方格式 `./name`），避免泄露
+        // 桌面端绝对路径。
+        items.add(MentionItem(
+          category: MentionCategory.files,
+          title: name,
+          subtitle: isDir ? '目录' : '文件',
+          isDirectory: isDir,
+          insertMarkdown: fileMentionMarkdown(name, name, directory: isDir),
+        ));
+      }
+      setState(() => _mentionFiles = items);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _mentionFilesFailed = true;
+        _mentionFiles = const [];
+      });
+    }
+  }
+
+  Future<void> _loadMentionSessions() async {
+    try {
+      final sub = await _transport.subscribeSessionsIndex();
+      if (!mounted) {
+        await sub.dispose();
+        return;
+      }
+      _mentionSessionsSub = sub;
+      void pull() {
+        final sessions = sub.state.sessions.values.toList()
+          ..sort((a, b) => b.lastActivityAt.compareTo(a.lastActivityAt));
+        final items = [
+          for (final s in sessions.take(30))
+            if (s.sessionId.isNotEmpty && s.sessionId != _sessionId)
+              MentionItem(
+                category: MentionCategory.sessions,
+                title: s.title.isEmpty ? '未命名会话' : s.title,
+                subtitle: s.lastAssistantPreview ?? '',
+                insertMarkdown:
+                    sessionMentionMarkdown(s.sessionId, s.title),
+              ),
+        ];
+        if (mounted) setState(() => _mentionSessions = items);
+      }
+
+      sub.state.addListener(pull);
+      pull();
+    } catch (_) {
+      if (mounted) setState(() => _mentionSessions = const []);
+    }
+  }
+
+  /// Replaces the trigger token (from its start to the cursor) with the
+  /// selected mention markdown plus a trailing space, cursor at the end.
+  void _insertMention(MentionItem item) {
+    final text = _inputController.text;
+    final sel = _inputController.selection;
+    var start = sel.baseOffset;
+    if (start < 0 || start > text.length) start = text.length;
+    final before = text.substring(0, start);
+    final m = RegExp(r'(?:^|\s)([@#])([^\s@#]*)$').firstMatch(before);
+    final tokenStart = m?.start ?? start - 1 - _mentionQuery.length;
+    final merged = text.replaceRange(
+        tokenStart < 0 ? 0 : tokenStart, start, '${item.insertMarkdown} ');
+    _inputController.text = merged;
+    _inputController.selection = TextSelection.collapsed(
+        offset: tokenStart + item.insertMarkdown.length + 1);
+    setState(() {
+      _mentionTrigger = null;
+      _mentionQuery = '';
     });
   }
 
@@ -313,6 +448,7 @@ class _ChatPageState extends State<ChatPage> {
   @override
   void dispose() {
     _subscription?.dispose();
+    _mentionSessionsSub?.dispose();
     VoiceModelEvents.changed.removeListener(_loadVoiceAvailability);
     _voiceTranscriber?.dispose();
     _inputController.dispose();
@@ -1252,9 +1388,21 @@ class _ChatPageState extends State<ChatPage> {
     return items;
   }
 
+  /// Skills shown in the `@` mention menu (same trigger text as the slash
+  /// bar — the composer sends `$name` either way).
+  List<MentionItem> get _mentionSkills => [
+        for (final item in _slashItems)
+          if (item.isSkill)
+            MentionItem(
+              category: MentionCategory.skills,
+              title: item.name,
+              subtitle: item.description,
+              insertMarkdown: item.insert,
+            ),
+      ];
+
   /// Dedicated skill picker so skills are one tap away (no `/` guessing).
-  void _openSkillsPicker() {
-    showModalBottomSheet<void>(
+  void _openSkillsPicker() {    showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
       builder: (context) => _SkillsPickerSheet(
@@ -1536,8 +1684,21 @@ class _ChatPageState extends State<ChatPage> {
                   setState(() => _showSlash = false);
                 }
               },
-            ),
-          if (_progress != null)
+            )
+          else if (_mentionTrigger != null)
+            MentionMenuBar(
+              query: _mentionQuery,
+              hidden: {
+                if (_mentionFilesFailed) MentionCategory.files,
+              },
+              items: {
+                MentionCategory.files:
+                    _mentionTrigger == '@' ? _mentionFiles : null,
+                MentionCategory.sessions: _mentionSessions,
+                MentionCategory.skills: _mentionSkills,
+              },
+              onSelect: _insertMention,
+            ),          if (_progress != null)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
               child: Row(
@@ -2176,16 +2337,21 @@ class _UserBubble extends StatelessWidget {
     return Align(
       alignment: Alignment.centerRight,
       child: Container(
+        // Official user bubble (`data-v4-user-input-bubble`): 12px radius
+        // with a 2px top-right corner, surface fill + 10% hairline, 16/12
+        // padding, max-w-xl (576px).
+        constraints: const BoxConstraints(maxWidth: 576),
         margin: const EdgeInsets.only(left: 56, top: 4, bottom: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
-          color: ZColors.primary.withValues(alpha: 0.22),
+          color: ZInk.messageSurface(context),
           borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(16),
-            topRight: Radius.circular(16),
-            bottomLeft: Radius.circular(16),
-            bottomRight: Radius.circular(4),
+            topLeft: Radius.circular(12),
+            topRight: Radius.circular(2),
+            bottomLeft: Radius.circular(12),
+            bottomRight: Radius.circular(12),
           ),
+          border: Border.all(color: ZInk.messageBorder(context)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.end,
@@ -2428,25 +2594,28 @@ class _ReasoningTile extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 4),
       decoration: BoxDecoration(
-        color: ZInk.reasoningPanel(context),
+        color: ZInk.messageSurface(context),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: ZInk.reasoningBorder(context)),
+        border: Border.all(color: ZInk.messageBorder(context)),
       ),
       child: ExpansionTile(
         initiallyExpanded: streaming,
         dense: true,
         shape: const Border(),
         collapsedShape: const Border(),
-        iconColor: ZColors.running,
+        iconColor: ZColors.trajectoryReasoning,
         collapsedIconColor: ZInk.muted(context),
         tilePadding: const EdgeInsets.symmetric(horizontal: 12),
         title: Row(
           children: [
             Icon(Icons.psychology_outlined,
-                size: 14, color: streaming ? ZColors.running : ZColors.primary),
+                size: 14,
+                color: streaming
+                    ? ZColors.running
+                    : ZColors.trajectoryReasoning),
             const SizedBox(width: 6),
             Text(
-              streaming ? '思考中…' : '思考过程',
+              streaming ? '思考中…' : '思考',
               style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,

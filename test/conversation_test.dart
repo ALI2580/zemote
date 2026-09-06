@@ -505,6 +505,41 @@ void main() {
       expect(state.sessions['main-1']!.parentSessionId, isNull);
     });
   });
+
+  group('parseFileEntries (fileService.readdir response)', () {
+    test('bare list passes through', () {
+      final entries = parseFileEntries([
+        {'name': 'lib', 'isDirectory': true},
+        {'name': 'README.md', 'isDirectory': false},
+      ]);
+      expect(entries, hasLength(2));
+      expect(entries[0]['name'], 'lib');
+    });
+
+    test('map with entries/children/files unwraps', () {
+      expect(parseFileEntries({
+        'entries': [
+          {'name': 'a'},
+        ],
+      }), hasLength(1));
+      expect(parseFileEntries({
+        'children': [
+          {'name': 'b'},
+        ],
+      }), hasLength(1));
+      expect(parseFileEntries({
+        'files': [
+          {'name': 'c'},
+        ],
+      }), hasLength(1));
+    });
+
+    test('unrecognized shapes degrade to empty list', () {
+      expect(parseFileEntries(null), isEmpty);
+      expect(parseFileEntries('str'), isEmpty);
+      expect(parseFileEntries({'other': []}), isEmpty);
+    });
+  });
 }
 
 void _injectSnapshot(

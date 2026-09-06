@@ -715,6 +715,39 @@ class ConversationTransport {
         SkillEntry._(item.cast<String, dynamic>()),
     ].where((s) => s.name.isNotEmpty).toList();
   }
+
+  /// `fileService.readdir` — lists a directory via the desktop file service
+  /// on the `file` channel (mirrors the web client's file browser). Used by
+  /// the composer's `@` mention menu. An unrecognized response shape yields
+  /// an empty list, so callers degrade to a menu without the files section
+  /// instead of surfacing an error.
+  Future<List<Map<String, dynamic>>> readdir(
+    String path, {
+    bool includeHidden = false,
+  }) async {
+    final res = await _channels.call(
+      Channels.file,
+      'fileService.readdir',
+      [
+        {'path': path, 'includeHidden': includeHidden},
+      ],
+      timeout: const Duration(seconds: 20),
+    );
+    _log('[conversation] readdir($path) -> ${res.runtimeType}');
+    return parseFileEntries(res);
+  }
+}
+
+/// Lenient decoder for `fileService.readdir` responses whose exact shape is
+/// not fully mapped yet: accept a bare list or a map with `entries`/
+/// `children`/`files`.
+List<Map<String, dynamic>> parseFileEntries(Object? res) {
+  Object? raw = res;
+  if (raw is Map) {
+    raw = raw['entries'] ?? raw['children'] ?? raw['files'];
+  }
+  if (raw is! List) return const [];
+  return [for (final item in raw.whereType<Map>()) item.cast<String, dynamic>()];
 }
 
 /// Shared base for Conversation/SessionsIndex subscriptions.

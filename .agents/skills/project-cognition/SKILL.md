@@ -113,6 +113,9 @@ flutter run -d chrome    # Web 冒烟
 
 - 改**协议层/连接/重连**相关代码前 → 读 `references/protocol-map.md`
   （各层职责、官方函数对应、帧格式、竞态点）。
+- 改**对话页 UI / composer / mention(@) 相关**前 → 读
+  `references/official-web-ui.md`（官方 Web 客户端逆向：mention markdown
+  格式、主题 CSS 变量、消息区样式常量、待挖清单）。
 - 排查**回归类 bug** 或写修复方案前 → 读 `references/lessons.md`
   （按主题分类的完整踩坑记录与根因）。
 - 发**版本或改 CI/签名/更新检测**前 → 读 `references/release-and-testing.md`。

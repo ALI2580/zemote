@@ -7,8 +7,8 @@ import 'package:zemote/update/app_version.dart';
 
 void main() {
   test('bundled app version matches the release currently being built', () {
-    expect(appVersion, '0.5.6');
-    expect(appBuildNumber, 18);
+    expect(appVersion, '0.5.7');
+    expect(appBuildNumber, 19);
   });
 
   test('beta channel setting persists', () async {

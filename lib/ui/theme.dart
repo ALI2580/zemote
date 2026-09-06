@@ -56,6 +56,25 @@ class ZColors {
   static const composerDark = Color(0xFF2B2B2B);
   static const composerLight = Color(0xFFFFFFFF);
 
+  // ---- Conversation-page constants translated from the official web CSS
+  // variables (theme-zai-dark / theme-zai-light tokens in the bundle CSS).
+
+  /// `--color-surface`: dark white@5%, light black@4% — user bubble and
+  /// reasoning tile fill.
+  static const messageSurfaceDark = Color(0x0DFFFFFF);
+  static const messageSurfaceLight = Color(0x0A0D0D0D);
+
+  /// `--color-border`: dark white@10%, light black@10%.
+  static const messageBorderDark = Color(0x1AFFFFFF);
+  static const messageBorderLight = Color(0x1A0D0D0D);
+
+  /// `--color-trajectory-*` timeline accents.
+  static const trajectoryUser = Color(0xFF60A5FA);
+  static const trajectoryAssistant = Color(0xFF2DD4BF);
+  static const trajectoryReasoning = Color(0xFFA78BFA);
+  static const trajectoryToolCall = Color(0xFFF59E0B);
+  static const trajectoryToolResult = Color(0xFF38BDF8);
+
   static const lightBg = Color(0xFFF6F8FC);
   static const lightSurface = Color(0xFFFFFFFF);
   static const lightCard = Color(0xFFFFFFFF);
@@ -121,6 +140,16 @@ class ZInk {
   /// Reasoning-specific fill, visually distinct from tool output.
   static Color reasoningPanel(BuildContext context) =>
       _isLight(context) ? const Color(0xFFE9F2FF) : const Color(0xFF132A46);
+
+  /// Official message-surface fill (`--color-surface` token).
+  static Color messageSurface(BuildContext context) => _isLight(context)
+      ? ZColors.messageSurfaceLight
+      : ZColors.messageSurfaceDark;
+
+  /// Official hairline border (`--color-border` token, white/black@10%).
+  static Color messageBorder(BuildContext context) => _isLight(context)
+      ? ZColors.messageBorderLight
+      : ZColors.messageBorderDark;
 
   static Color reasoningBorder(BuildContext context) =>
       _isLight(context) ? const Color(0xFF9DBCE2) : const Color(0xFF315A82);
