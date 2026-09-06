@@ -79,7 +79,7 @@ flutter {
 
 dependencies {
     // Live Updates (promoted ongoing / ProgressStyle) compat surface.
-    // Newer than Flutter's transitive androidx.core — resolves conflicts by
-    // picking the highest declared version.
-    implementation("androidx.core:core:1.19.0")
+    // 1.18.0 is the newest line that still compiles against SDK 36
+    // (1.19.x requires compileSdk 37 via its core-ktx dependency).
+    implementation("androidx.core:core:1.18.0")
 }
