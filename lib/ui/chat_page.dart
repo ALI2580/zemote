@@ -2636,33 +2636,125 @@ class _ReasoningTile extends StatelessWidget {
   }
 }
 
-class _ToolCallTile extends StatelessWidget {
+class _ToolCallTile extends StatefulWidget {
   final Map<String, dynamic> row;
 
   const _ToolCallTile({required this.row});
 
   @override
+  State<_ToolCallTile> createState() => _ToolCallTileState();
+}
+
+class _ToolCallTileState extends State<_ToolCallTile> {
+  bool _expanded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // 官方行为：运行中/等待确认的工具默认展开详情。
+    final status = widget.row['status'] as String? ?? '';
+    _expanded = status == 'running' ||
+        status == 'inputStreaming' ||
+        status == 'pendingApproval';
+  }
+
+  /// Official kind labels (`chat.toolCall.kind.*`) — the header shows a
+  /// localized kind, falling back to the raw tool name.
+  static const _kindLabels = {
+    'Read': '读取',
+    'Write': '写入',
+    'Edit': '编辑',
+    'MultiEdit': '编辑',
+    'NotebookEdit': '编辑',
+    'Grep': '搜索',
+    'Glob': '搜索',
+    'WebFetch': '搜索',
+    'WebSearch': '搜索',
+    'Bash': '命令',
+    'TodoWrite': '待办',
+    'Task': '任务',
+  };
+
+  /// Official status labels (`chat.toolCall.status.*`).
+  static const _statusLabels = {
+    'pending': '等待中',
+    'pendingApproval': '等待确认',
+    'inputStreaming': '执行中',
+    'running': '执行中',
+    'success': '已执行',
+    'completed': '已执行',
+    'error': '执行失败',
+    'failed': '执行失败',
+    'cancelled': '已停止',
+    'denied': '已拒绝',
+    'stopped': '已停止',
+  };
+
+  String get _kindLabel {
+    final toolName = widget.row['toolName'] as String? ?? '';
+    return _kindLabels[toolName] ?? toolName;
+  }
+
+  /// Primary summary: a file path / command / pattern from the structured
+  /// input when present (official `title`), else the truncated raw input.
+  String get _primaryText {
+    final inputText = widget.row['inputText'] as String? ?? '';
+    if (inputText.isEmpty) return '';
+    Object? input;
+    try {
+      input = jsonDecode(inputText);
+    } catch (_) {
+      final one = inputText.replaceAll('\n', ' ').trim();
+      return one.length > 60 ? '${one.substring(0, 60)}…' : one;
+    }
+    if (input is Map) {
+      for (final key in ['filePath', 'file_path', 'path', 'command',
+        'pattern', 'url', 'query', 'description']) {
+        final v = input[key];
+        if (v is String && v.isNotEmpty) {
+          return v.replaceAll('\n', ' ');
+        }
+      }
+    }
+    final one = inputText.replaceAll('\n', ' ').trim();
+    return one.length > 60 ? '${one.substring(0, 60)}…' : one;
+  }
+
+  (String, Color) _statusLabel(BuildContext context) {
+    final status = widget.row['status'] as String? ?? '';
+    final label = _statusLabels[status] ?? status;
+    final color = switch (status) {
+      'running' || 'inputStreaming' => ZColors.running,
+      'pendingApproval' => ZColors.warning,
+      'pending' => ZInk.faint(context),
+      'error' || 'failed' => ZColors.danger,
+      _ => ZInk.faint(context),
+    };
+    return (label, color);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final toolName = row['toolName'] as String? ?? 'tool';
+    final row = widget.row;
     final status = row['status'] as String? ?? '';
-    final inputText = row['inputText'] as String? ?? '';
+    final running = status == 'running' ||
+        status == 'inputStreaming' ||
+        status == 'pendingApproval';
     final output = row['output'];
     final outputText = output is Map ? output['text'] as String? ?? '' : '';
     final error = row['error'];
     final progress = row['progress'];
     final display = row['display'];
     final diff = extractDiff(row);
-
-    final (icon, color) = switch (status) {
-      'running' || 'inputStreaming' || 'pendingApproval' => (
-          Icons.hourglass_top,
-          ZColors.running
-        ),
-      'success' => (Icons.check, ZColors.success),
-      'error' => (Icons.error_outline, ZColors.danger),
-      'cancelled' => (Icons.block, ZColors.warning),
-      _ => (Icons.build_outlined, ZInk.faint(context)),
-    };
+    final hasDetails = (row['inputText'] as String? ?? '').isNotEmpty ||
+        outputText.isNotEmpty ||
+        error is Map ||
+        diff != null ||
+        (display is Map &&
+            display['kind'] == 'node_repl_images' &&
+            display['images'] is List);
+    final primary = _primaryText;
+    final (statusLabel, statusColor) = _statusLabel(context);
 
     final images = display is Map &&
             display['kind'] == 'node_repl_images' &&
@@ -2670,67 +2762,132 @@ class _ToolCallTile extends StatelessWidget {
         ? display['images'] as List
         : const [];
 
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 3),
-      decoration: BoxDecoration(
-        color: ZInk.panel(context),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: ZInk.panelBorder(context)),
+    // 官方 ToolLayout（A7e/O7e）是无卡片容器的行式布局：图标 + kind 标签 +
+    // 摘要 + 状态，全部 subtle 灰，点击展开详情（pt-2），失败态红色加重。
+    final header = Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(_iconFor(status),
+              size: 14, color: running ? ZColors.running : ZInk.faint(context)),
+          const SizedBox(width: 7),
+          Text(
+            _kindLabel,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: running ? ZColors.running : ZInk.muted(context),
+            ),
+          ),
+          if (primary.isNotEmpty) ...[
+            const SizedBox(width: 7),
+            Text('·', style: TextStyle(fontSize: 12, color: ZInk.faint(context))),
+            const SizedBox(width: 7),
+            Expanded(
+              child: Text(
+                primary,
+                style: TextStyle(fontSize: 13, color: ZInk.muted(context)),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ] else
+            const Spacer(),
+          if (statusLabel.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(left: 7),
+              child: Text(statusLabel,
+                  style: TextStyle(fontSize: 12, color: statusColor)),
+            ),
+          if (hasDetails)
+            Padding(
+              padding: const EdgeInsets.only(left: 5),
+              child: AnimatedRotation(
+                turns: _expanded ? 0.25 : 0,
+                duration: const Duration(milliseconds: 150),
+                child: Icon(Icons.chevron_right,
+                    size: 16, color: ZInk.faint(context)),
+              ),
+            ),
+        ],
       ),
+    );
+
+    final body = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (row['inputText'] is String && (row['inputText'] as String).isNotEmpty)
+          _kv(context, '输入', row['inputText'] as String),
+        if (outputText.isNotEmpty) _kv(context, '输出', outputText),
+        if (error is Map)
+          _kv(context, '错误', '${error['code'] ?? ''} ${error['message'] ?? ''}'),
+      ],
+    );
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          ExpansionTile(
-            initiallyExpanded: status == 'running' ||
-                status == 'inputStreaming' ||
-                status == 'pendingApproval',
-            dense: true,
-            shape: const Border(),
-            collapsedShape: const Border(),
-            iconColor: color,
-            collapsedIconColor: ZInk.muted(context),
-            tilePadding: const EdgeInsets.symmetric(horizontal: 12),
-            leading: Icon(icon, size: 15, color: color),
-            title: Text(toolName,
-                style: TextStyle(
-                    fontSize: 12.5,
-                    fontFamily: 'monospace',
-                    fontWeight: FontWeight.w600,
-                    color: ZInk.solid(context))),
-            subtitle: Text(status,
-                style: TextStyle(fontSize: 10.5, color: ZInk.muted(context))),
-            children: [
-              if (inputText.isNotEmpty) _kv(context, '输入', inputText),
-              if (outputText.isNotEmpty) _kv(context, '输出', outputText),
-              if (error is Map)
-                _kv(context, '错误',
-                    '${error['code'] ?? ''} ${error['message'] ?? ''}'),
-            ],
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: hasDetails ? () => setState(() => _expanded = !_expanded) : null,
+            child: header,
           ),
-          if (progress is Map) _ProgressRow(progress: progress),
-          if (diff != null)
+          if (_expanded && hasDetails)
             Padding(
-              padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-              child: DiffView(diff: diff),
-            ),
-          for (final image in images)
-            if (image is Map && image['base64'] is String)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: Image.memory(
-                    base64Decode(image['base64'] as String),
-                    cacheWidth: (MediaQuery.sizeOf(context).width * 2).round(),
-                    fit: BoxFit.contain,
-                    errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+              padding: const EdgeInsets.only(top: 4, left: 8),
+              child: Container(
+                padding: const EdgeInsets.only(left: 10),
+                decoration: BoxDecoration(
+                  border: Border(
+                    left: BorderSide(
+                        width: 2, color: ZInk.messageBorder(context)),
                   ),
                 ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    body,
+                    if (progress is Map) _ProgressRow(progress: progress),
+                    if (diff != null)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(0, 4, 8, 8),
+                        child: DiffView(diff: diff),
+                      ),
+                    for (final image in images)
+                      if (image is Map && image['base64'] is String)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(0, 0, 12, 8),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: Image.memory(
+                              base64Decode(image['base64'] as String),
+                              cacheWidth:
+                                  (MediaQuery.sizeOf(context).width * 2).round(),
+                              fit: BoxFit.contain,
+                              errorBuilder: (_, __, ___) =>
+                                  const SizedBox.shrink(),
+                            ),
+                          ),
+                        ),
+                  ],
+                ),
               ),
+            ),
         ],
       ),
     );
   }
+
+  IconData _iconFor(String status) => switch (status) {
+        'running' || 'inputStreaming' => Icons.hourglass_top,
+        'success' || 'completed' => Icons.check,
+        'error' || 'failed' => Icons.error_outline,
+        'cancelled' || 'stopped' => Icons.block,
+        'pendingApproval' => Icons.privacy_tip_outlined,
+        _ => Icons.build_outlined,
+      };
 
   Widget _kv(BuildContext context, String label, String value) {
     Object? structured;
@@ -2738,7 +2895,7 @@ class _ToolCallTile extends StatelessWidget {
       structured = jsonDecode(value);
     } catch (_) {}
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      padding: const EdgeInsets.fromLTRB(0, 0, 12, 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -2843,7 +3000,6 @@ class _TurnHeader extends StatelessWidget {
       'completedSuccess' => [
           '本轮完成',
           if (duration.isNotEmpty) duration,
-          if (stats.isNotEmpty) stats,
         ].join(' · '),
       'completedInterrupted' => '已中断',
       'failed' => '本轮失败',
@@ -2854,22 +3010,23 @@ class _TurnHeader extends StatelessWidget {
       'running' => ZColors.running,
       'failed' => ZColors.danger,
       'completedInterrupted' => ZColors.warning,
-      _ => ZInk.faint(context),
+      _ => ZInk.muted(context),
     };
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 10),
+    // 官方 turnHeader（Jat）：左对齐 subtle 小字 + 底部发丝分隔线。
+    return Container(
+      margin: const EdgeInsets.only(top: 10, bottom: 6),
+      padding: const EdgeInsets.only(bottom: 6),
+      decoration: BoxDecoration(
+        border: Border(
+            bottom: BorderSide(color: ZInk.messageBorder(context))),
+      ),
       child: Row(
         children: [
-          const Expanded(child: Divider()),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            child: Text(
-              label,
-              style:
-                  TextStyle(fontSize: 11, color: color.withValues(alpha: 0.9)),
-            ),
-          ),
-          const Expanded(child: Divider()),
+          Text(label, style: TextStyle(fontSize: 12, color: color)),
+          if (stats.isNotEmpty) ...[
+            const SizedBox(width: 8),
+            Text(stats, style: TextStyle(fontSize: 12, color: ZInk.faint(context))),
+          ],
         ],
       ),
     );
@@ -2887,7 +3044,7 @@ class _TimelineMarkerWidget extends StatelessWidget {
     if (marker is! Map) return const SizedBox.shrink();
     final type = '${marker['type'] ?? ''}';
 
-    final (icon, text, color) = switch (type) {
+    final (icon, text, _) = switch (type) {
       'compact' => (
           Icons.compress,
           '压缩上下文 · ${marker['status'] ?? ''}'
@@ -2920,27 +3077,34 @@ class _TimelineMarkerWidget extends StatelessWidget {
       _ => (Icons.info_outline, type, ZInk.faint(context)),
     };
 
+    // 官方 timelineMarker（$at）：左右两条 1px 细线夹着中央图标与标签，
+    // 无底色 pill；文本统一 subtle 灰。
     return Center(
       child: Container(
         margin: const EdgeInsets.symmetric(vertical: 6),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(20),
-        ),
+        padding: const EdgeInsets.symmetric(horizontal: 4),
         child: Row(
-          mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 12, color: color),
-            const SizedBox(width: 5),
-            Flexible(
-              child: Text(
-                text,
-                style: TextStyle(fontSize: 11, color: color),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+            Expanded(child: Container(height: 1, color: ZInk.messageBorder(context))),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, size: 13, color: ZInk.muted(context)),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      text,
+                      style: TextStyle(fontSize: 12, color: ZInk.muted(context)),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
               ),
             ),
+            Expanded(child: Container(height: 1, color: ZInk.messageBorder(context))),
           ],
         ),
       ),
@@ -2955,29 +3119,30 @@ class _SubagentTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: Colors.deepPurple.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(12),
-      ),
+    // 官方 subagent 行（not 组件）：一行 subtle 小字「类型 · 状态 — 摘要」，
+    // 无卡片容器、无图标。
+    final type = row['subagentType'] as String? ?? '';
+    final status = row['status'] as String? ?? '';
+    final summary = row['summaryText'] as String? ?? '';
+    final text = [
+      if (type.isNotEmpty) type,
+      if (status.isNotEmpty) status,
+    ].join(' · ');
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
           const Icon(Icons.smart_toy_outlined,
-              size: 15, color: Colors.deepPurpleAccent),
-          const SizedBox(width: 8),
+              size: 13, color: ZColors.trajectoryAssistant),
+          const SizedBox(width: 7),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('子代理 · ${row['subagentType'] ?? ''}',
-                    style: const TextStyle(fontSize: 12)),
-                Text('${row['status'] ?? ''}  ${row['summaryText'] ?? ''}',
-                    style: TextStyle(fontSize: 11, color: ZInk.faint(context)),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis),
-              ],
+            child: Text(
+              summary.isNotEmpty
+                  ? '$text — $summary'
+                  : text,
+              style: TextStyle(fontSize: 12, color: ZInk.muted(context)),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
         ],
@@ -3948,30 +4113,39 @@ class _InteractionCardState extends State<_InteractionCard> {
     final freeText = payload['freeText'] == true;
 
     final title =
-        kind == 'permission' ? '权限请求 · ${payload['toolName'] ?? ''}' : '等待你的输入';
+        kind == 'permission' ? '需要权限' : '等待你的输入';
 
+    // 官方 elicitation 权限卡（data-elicitation-dialog-card）：实色卡片
+    // 16px 圆角 + 发丝边框，内体 12px 间距；选项为竖排全宽按钮行
+    // （rounded-xl px-3 py-2，序号 + 标签 + 描述），确认色用绿色系。
     return Container(
       margin: const EdgeInsets.fromLTRB(14, 4, 14, 0),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: ZColors.warning.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: ZColors.warning.withValues(alpha: 0.35)),
+        color: ZInk.confirmSurface(context),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: ZInk.messageBorder(context)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Icon(Icons.privacy_tip_outlined,
-                  size: 14, color: ZColors.warning),
+              Icon(Icons.privacy_tip_outlined,
+                  size: 14, color: ZInk.confirmForeground(context)),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
                   title,
-                  style: const TextStyle(fontSize: 13),
+                  style: const TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w600),
                 ),
               ),
+              if (kind == 'permission' && payload['toolName'] != null)
+                Text('${payload['toolName']}',
+                    style: TextStyle(
+                        fontSize: 11, fontFamily: 'monospace',
+                        color: ZInk.muted(context))),
             ],
           ),
           if (kind == 'userInput' &&
@@ -3989,27 +4163,22 @@ class _InteractionCardState extends State<_InteractionCard> {
             ),
           const SizedBox(height: 8),
           if (options is List && options.isNotEmpty)
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                for (final option in options)
-                  if (option is Map)
-                    OutlinedButton(
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 6),
-                        minimumSize: Size.zero,
-                      ),
-                      onPressed: _busy
-                          ? null
-                          : () => kind == 'permission'
-                              ? _resolve(optionId: '${option['optionId']}')
-                              : _resolve(action: 'accept', content: {}),
-                      child: Text(
-                        _optionLabel(option),
-                        style: const TextStyle(fontSize: 12),
-                      ),
+                for (var i = 0; i < options.length; i++)
+                  if (options[i] is Map)
+                    _PermissionOption(
+                      index: i,
+                      label: _optionLabel(options[i] as Map),
+                      description: kind == 'permission'
+                          ? (options[i]['description'] as String? ?? '')
+                          : '',
+                      busy: _busy,
+                      onTap: () => kind == 'permission'
+                          ? _resolve(
+                              optionId: '${(options[i] as Map)['optionId']}')
+                          : _resolve(action: 'accept', content: {}),
                     ),
               ],
             ),
@@ -4061,6 +4230,73 @@ class _InteractionCardState extends State<_InteractionCard> {
       'custom' => '自定义',
       _ => '${option['optionId'] ?? '选择'}',
     };
+  }
+}
+
+/// Official permission option row (elicitation option button): full-width
+/// rounded-xl row with an ordinal, label and optional description.
+class _PermissionOption extends StatelessWidget {
+  final int index;
+  final String label;
+  final String description;
+  final bool busy;
+  final VoidCallback onTap;
+
+  const _PermissionOption({
+    required this.index,
+    required this.label,
+    required this.description,
+    required this.busy,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Opacity(
+      opacity: busy ? 0.55 : 1,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: busy ? null : onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 18,
+                  child: Text('${index + 1}.',
+                      style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          color: ZInk.muted(context))),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(label,
+                          style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              color: ZInk.confirmForeground(context))),
+                      if (description.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 1),
+                          child: Text(description,
+                              style: TextStyle(
+                                  fontSize: 11, color: ZInk.muted(context))),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

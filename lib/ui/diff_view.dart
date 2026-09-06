@@ -177,7 +177,8 @@ class DiffView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final light = Theme.of(context).brightness == Brightness.light;
+    // 官方 diff 行规格（j7e/TG 组件）：行底 = 色 14% 混合 + 左 3px 内嵌色条，
+    // 行文本保持正常前景色（色彩只出现在底色、色条与行号上）。
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 4),
       decoration: BoxDecoration(
@@ -213,13 +214,24 @@ class DiffView extends StatelessWidget {
               children: [
                 for (final line in diff.lines.take(400))
                   Container(
-                    color: switch (line.type) {
-                      DiffLineType.added =>
-                        const Color(0xFF22C55E).withValues(alpha: 0.12),
-                      DiffLineType.removed =>
-                        const Color(0xFFEF4444).withValues(alpha: 0.12),
-                      DiffLineType.context => Colors.transparent,
-                    },
+                    decoration: BoxDecoration(
+                      color: switch (line.type) {
+                        DiffLineType.added => ZInk.diffAdded(context)
+                            .withValues(alpha: 0.14),
+                        DiffLineType.removed => ZInk.diffRemoved(context)
+                            .withValues(alpha: 0.14),
+                        DiffLineType.context => Colors.transparent,
+                      },
+                      border: switch (line.type) {
+                        DiffLineType.added => Border(
+                            left: BorderSide(
+                                width: 3, color: ZInk.diffAdded(context))),
+                        DiffLineType.removed => Border(
+                            left: BorderSide(
+                                width: 3, color: ZInk.diffRemoved(context))),
+                        DiffLineType.context => Border.all(color: Colors.transparent),
+                      },
+                    ),
                     padding:
                         const EdgeInsets.symmetric(horizontal: 10, vertical: 1),
                     child: Text(
@@ -229,13 +241,10 @@ class DiffView extends StatelessWidget {
                         fontSize: 11,
                         height: 1.45,
                         color: switch (line.type) {
-                          DiffLineType.added => light
-                              ? const Color(0xFF166534)
-                              : const Color(0xFF86EFAC),
-                          DiffLineType.removed => light
-                              ? const Color(0xFF991B1B)
-                              : const Color(0xFFFCA5A5),
+                          // 官方 diff 行文本为正常前景色，色彩只体现在
+                          // 底色与左侧色条上。
                           DiffLineType.context => ZInk.soft(context),
+                          _ => ZInk.solid(context),
                         },
                       ),
                     ),

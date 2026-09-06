@@ -43,6 +43,79 @@ token 节点（类 `QA`，`setMode('token')`）。节点携带：
 
 ## 消息区官方样式（已确认）
 
+### 主聊天 rows 组件映射（rot switch 表）
+
+userInput→Gat（用户气泡）· assistantText→Kat（直排 markdown）·
+reasoning→qat（折叠块）· turnHeader→Jat · toolCall→tot→oY(`ToolCallBlock`→Brt)→
+zrt(工具族分发) · subagent→not · timelineMarker→$at。
+
+### 工具卡片（ToolLayout / A7e + O7e + E7e + D7e）
+
+**无卡片容器**——行式布局：
+- 头部行 `inline-flex items-center gap-2 text-ui-base(14px)`：
+  图标(subtlest) → kindLabel → primaryText → secondaryText → statusNode，
+  全部 subtlest 灰（`text-foreground-subtlest`）。
+- kindLabel：running 时 `animated-gradient-text`（渐变动画），否则 plain；
+  中文文案：读取/搜索/写入/编辑/删除（`chat.toolCall.kind.*`），default 用
+  英文 kind 首字母大写。
+- 状态文案：等待中/执行中/已执行/执行失败/已拒绝/已停止
+  （`chat.toolCall.status.*`）。
+- Chevron size-4 默认 opacity-0，hover/展开 100%，展开 rotate-90。
+- 展开内容 `pt-2`；**子工具/多文件/问题列表统一左竖线**：
+  `ml-2 space-y-2 border-l border-border pl-3.5`。
+- 失败态：primaryText 换成 statusLabel（红），statusTooltip 挂错误详情。
+- 原始输出 fallback：`px-4 py-3 rounded-xl bg-surface text-ui-xs
+  text-foreground-subtle max-h-50 overflow-auto`。
+
+工具族→组件：file-read→Net、file-write→WK（diffCount 角标）、shell→ZK、
+search→sq、agent→rtt、todo→Art（默认隐藏）、ask-user-question→Mrt
+（kindLabel=正在询问/已询问，secondary=N 个问题）、message→drt/crt、
+changesGroup→utt、executeGroup→mtt、default→Dq。
+
+### 文件编辑与 diff（WK + TG/j7e/wG）
+
+- diffCount 角标：`+N -N`，class `text-diff-added` / `text-diff-removed`，
+  font-mono，tabular-nums。
+- **diff 色值**：`--color-diff-added/removed`：深色 `#46bf72`/`#ff5c5c`，
+  浅色 `#1e8a3e`/`#e03131`。
+- **diff 行渲染**：行底 = 色 14% 混合（`color-mix 14% transparent`）+
+  左 3px 内嵌色条（`boxShadow: inset 3px 0 0 var(--color-diff-*)`）；
+  行文本保持**正常前景色**（色彩只在底色与色条）；行号槽 `w-12` 右对齐、
+  18% 底色 + 右边框；截断提示行 `px-3 py-1 text-foreground-subtle`；
+  容器 `bg-background font-mono leading-relaxed`。
+
+### 交互确认卡（elicitation/permission，"Ask for me"对应物）
+
+- 卡片：`data-elicitation-dialog-card` = `rounded-2xl border border-border
+  bg-popover shadow-xs max-h-[min(72dvh,42rem)]`，内体 `p-3 gap-3`。
+- 标题 `text-ui-base font-medium leading-5`；问题文本 `leading-6
+  text-foreground`（>80 字符可折叠）。
+- **选项按钮**（竖排全宽）：`rounded-xl px-3 py-2`，序号 `w-5`，选中
+  `bg-selected`，hover `bg-hover`；规则（命令/文件）行
+  `font-mono text-ui-base text-foreground-subtle break-all`。
+- 键盘：Tab/上下选择，回车确认；倒计时按钮 `min-w-10 tabular-nums`。
+- **确认色** `--color-interaction-confirmation-*`：surface 深 `#46bf7229` /
+  浅 `#eaf7ee`；foreground 深 `#87d9a4` / 浅 `#166b32`（绿系，非警告橙）。
+- 权限文案：需要权限 / 允许 / 始终允许 / 允许本会话 / 始终允许本项目 /
+  拒绝 / 始终拒绝；描述文案"后续相同命令不再询问"等。
+
+### turnHeader / timelineMarker / subagent
+
+- turnHeader（Jat）：`border-b border-border py-1 text-ui-sm
+  text-foreground-subtle`，内容 `turn · origin · state`。
+- timelineMarker（$at）：**左右两条 1px 细线**（`h-px min-w-8 flex-1
+  bg-border/50`）夹中央 icon(size-3.5 subtle)+label；running 时
+  `animated-gradient-text font-medium`；可点击时 hover 下划线。
+- subagent（not）：**一行 subtle 小字** `类型 · 状态 — 摘要`
+  （`text-ui-sm text-foreground-subtle`），无卡片无图标。
+
+### 变更摘要卡（changeSummary）
+
+容器 `rounded-xl border border-border bg-card`，头部行 `h-10 px-2
+hover:bg-hover`：chevron size-3 + "N 个文件已更改"（font-medium）+
+`+N -N`（tabular-nums diff 色）；展开文件行 `px-1`：chevron + 路径 + 增删；
+操作：审查 / 在编辑器中打开 / 撤销（rewind）。
+
 ### 用户消息气泡（`data-v4-user-input-bubble`，精确 class）
 
 ```

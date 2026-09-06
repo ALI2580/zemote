@@ -75,6 +75,19 @@ class ZColors {
   static const trajectoryToolCall = Color(0xFFF59E0B);
   static const trajectoryToolResult = Color(0xFF38BDF8);
 
+  /// `--color-diff-added/removed` line accents (dark #46BF72/#FF5C5C,
+  /// light #1E8A3E/#E03131).
+  static const diffAddedDark = Color(0xFF46BF72);
+  static const diffRemovedDark = Color(0xFFFF5C5C);
+  static const diffAddedLight = Color(0xFF1E8A3E);
+  static const diffRemovedLight = Color(0xFFE03131);
+
+  /// `--color-interaction-confirmation-*` (permission/approval cards).
+  static const confirmSurfaceDark = Color(0x2946BF72);
+  static const confirmSurfaceLight = Color(0xFFEAF7EE);
+  static const confirmForegroundDark = Color(0xFF87D9A4);
+  static const confirmForegroundLight = Color(0xFF166B32);
+
   static const lightBg = Color(0xFFF6F8FC);
   static const lightSurface = Color(0xFFFFFFFF);
   static const lightCard = Color(0xFFFFFFFF);
@@ -150,6 +163,24 @@ class ZInk {
   static Color messageBorder(BuildContext context) => _isLight(context)
       ? ZColors.messageBorderLight
       : ZColors.messageBorderDark;
+
+  /// Diff line accents (`--color-diff-added/removed` tokens).
+  static Color diffAdded(BuildContext context) => _isLight(context)
+      ? ZColors.diffAddedLight
+      : ZColors.diffAddedDark;
+
+  static Color diffRemoved(BuildContext context) => _isLight(context)
+      ? ZColors.diffRemovedLight
+      : ZColors.diffRemovedDark;
+
+  /// Permission/approval confirmation accents.
+  static Color confirmSurface(BuildContext context) => _isLight(context)
+      ? ZColors.confirmSurfaceLight
+      : ZColors.confirmSurfaceDark;
+
+  static Color confirmForeground(BuildContext context) => _isLight(context)
+      ? ZColors.confirmForegroundLight
+      : ZColors.confirmForegroundDark;
 
   static Color reasoningBorder(BuildContext context) =>
       _isLight(context) ? const Color(0xFF9DBCE2) : const Color(0xFF315A82);
