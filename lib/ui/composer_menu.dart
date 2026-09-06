@@ -267,9 +267,11 @@ class ComposerMenuRow extends StatelessWidget {
   }
 }
 
-/// Two-level model menu: the current provider's models list flat; other
-/// providers drill into an in-card second page (official web uses a side
-/// flyout — an in-card drill reads better on narrow screens).
+/// Two-level model menu: level 1 always lists every provider (the current
+/// one highlighted with its model name), tapping a provider drills into an
+/// in-card second page. Every provider keeps a visible row — collapsing the
+/// current provider's models into an unlabeled flat list hid its provider
+/// entry entirely after a switch.
 class ComposerModelMenuBody extends StatefulWidget {
   final List<ConfigOptionValue> options;
   final String currentModelValue;
@@ -329,29 +331,24 @@ class _ComposerModelMenuBodyState extends State<ComposerModelMenuBody> {
         ],
       );
     }
-    String? currentProvider;
-    groups.forEach((provider, models) {
-      if (models.any((v) => v.value == widget.currentModelValue)) {
-        currentProvider = provider;
-      }
-    });
     final rows = <Widget>[];
     groups.forEach((provider, models) {
-      if (provider == currentProvider) {
-        rows.addAll(_modelRows(models, withProviderTags: false));
-      } else {
-        final isCurrent =
-            models.any((v) => v.value == widget.currentModelValue);
-        rows.add(ComposerMenuRow(
-          entry: ComposerMenuEntry(
-            title: provider,
-            subtitle: '${models.length} 个模型',
-            selected: isCurrent,
-          ),
-          onTap: () => setState(() => _openProvider = provider),
-          trailing: const Icon(Icons.chevron_right, size: 16),
-        ));
+      ConfigOptionValue? current;
+      for (final v in models) {
+        if (v.value == widget.currentModelValue) current = v;
       }
+      rows.add(ComposerMenuRow(
+        entry: ComposerMenuEntry(
+          icon: Icons.album_outlined,
+          title: provider,
+          subtitle: current != null
+              ? '当前 · ${current.name}'
+              : '${models.length} 个模型',
+          selected: current != null,
+        ),
+        onTap: () => setState(() => _openProvider = provider),
+        trailing: const Icon(Icons.chevron_right, size: 16),
+      ));
     });
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

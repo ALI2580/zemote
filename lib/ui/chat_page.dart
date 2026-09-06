@@ -111,6 +111,20 @@ class ChatPage extends StatefulWidget {
   final String? sessionId;
   final String title;
 
+  /// Auxiliary (side) chats reuse the parent session's usage figures in
+  /// their snapshot, so the context bar would show the main session's
+  /// percentage — hide it there.
+  final bool isSideChat;
+
+  /// Notified once a draft session materializes via `createSession` — the
+  /// tablet master-detail host uses it to bind the detail pane to the real
+  /// session and refresh the list.
+  final ValueChanged<String>? onSessionCreated;
+
+  /// Embedded hosts (tablet detail pane) set false so the AppBar doesn't
+  /// imply a back arrow that would pop the host shell.
+  final bool automaticallyImplyLeading;
+
   const ChatPage({
     super.key,
     required this.session,
@@ -118,6 +132,9 @@ class ChatPage extends StatefulWidget {
     required this.workspaceKey,
     this.sessionId,
     required this.title,
+    this.isSideChat = false,
+    this.onSessionCreated,
+    this.automaticallyImplyLeading = true,
   });
 
   @override
@@ -621,6 +638,7 @@ class _ChatPageState extends State<ChatPage> {
               workspaceKey: widget.workspaceKey,
               sessionId: sideId,
               title: '辅助对话',
+              isSideChat: true,
             ),
           ),
         );
@@ -686,6 +704,7 @@ class _ChatPageState extends State<ChatPage> {
                         workspaceKey: widget.workspaceKey,
                         sessionId: sideId,
                         title: '辅助对话',
+                        isSideChat: true,
                       ),
                     ),
                   ],
@@ -840,6 +859,7 @@ class _ChatPageState extends State<ChatPage> {
         }
         log('[chat] createSession ok in ${sw.elapsedMilliseconds}ms');
         _sessionId = sessionId;
+        widget.onSessionCreated?.call(sessionId);
         // The draft was consumed by the first send; drop it so backing out
         // and starting another new session doesn't resurface the sent text.
         _composerDrafts.remove('draft:${widget.workspaceKey}');
@@ -1137,16 +1157,43 @@ class _ChatPageState extends State<ChatPage> {
     return v.isEmpty ? '思考' : _thoughtTitleOf(v, v);
   }
 
+  /// Reason fragments that mean the CAS baseRevision raced a streamed
+  /// state bump — safe to retry once, the re-send picks up the freshest
+  /// revision (sendCommand recomputes it per call).
+  static const _conflictMarkers = ['conflict', 'stale', 'revision'];
+
+  Future<dynamic> _runConfigCommand(Future<dynamic> Function() run) async {
+    final res = await run();
+    if (res is Map &&
+        res['status'] != null &&
+        res['status'] != 'accepted' &&
+        res['status'] != 'noop') {
+      final reason =
+          '${res['reasonCode'] ?? res['status']} ${res['message'] ?? ''}'
+              .toLowerCase();
+      if (_conflictMarkers.any(reason.contains)) {
+        return await run();
+      }
+    }
+    return res;
+  }
+
   /// Shared apply path for the inline composer dropdowns (no sheet to pop).
-  Future<bool> _applyConfig(Future<dynamic> Function() run,
-      {void Function()? onAccepted}) async {
+  /// [successMessage] makes the success explicit — silent switches read as
+  /// failed switches.
+  Future<bool> _applyConfig(
+    Future<dynamic> Function() run, {
+    void Function()? onAccepted,
+    String? successMessage,
+  }) async {
     try {
-      final res = await run();
+      final res = await _runConfigCommand(run);
       if (res is Map && res['status'] != null && res['status'] != 'accepted') {
         _toast('被拒绝: ${res['reasonCode'] ?? res['status']}');
         return false;
       }
       onAccepted?.call();
+      if (successMessage != null) _toast(successMessage);
       return true;
     } catch (e) {
       _toast('失败: $e');
@@ -1164,6 +1211,7 @@ class _ChatPageState extends State<ChatPage> {
       onAccepted: () => _state?.optimisticPatch({
         'config': {...?_state!.config, 'mode': value},
       }),
+      successMessage: '协作模式已切换：${_modeTitleOf(value, value)}',
     );
   }
 
@@ -1190,6 +1238,7 @@ class _ChatPageState extends State<ChatPage> {
       onAccepted: () => _state?.optimisticPatch({
         'config': {...?_state!.config, 'thought': value},
       }),
+      successMessage: '思考强度已切换：${_thoughtTitleOf(value, value)}',
     );
   }
 
@@ -1226,6 +1275,7 @@ class _ChatPageState extends State<ChatPage> {
           'thought': thought,
         },
       }),
+      successMessage: '模型已切换：${v.name}',
     );
   }
 
@@ -1348,23 +1398,6 @@ class _ChatPageState extends State<ChatPage> {
 
   // ------------------------------------------------------------ sheets
 
-  void _showModelSheet() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (context) => _ModelModeSheet(
-        state: _state,
-        transport: _transport,
-        prep: _prep,
-        sessionId: _sessionId,
-        draftConfig: _draftConfig,
-        onDraftChange: (key, value) {
-          setState(() => _draftConfig[key] = value);
-        },
-      ),
-    );
-  }
-
   /// Slash entries = builtin/custom commands from prepareWorkspace plus the
   /// desktop's skills (triggered as `$name` in the composer).
   List<_SlashItem> get _slashItems {
@@ -1486,6 +1519,7 @@ class _ChatPageState extends State<ChatPage> {
     final state = _state;
     return Scaffold(
       appBar: AppBar(
+        automaticallyImplyLeading: widget.automaticallyImplyLeading,
         titleSpacing: 0,
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1527,11 +1561,6 @@ class _ChatPageState extends State<ChatPage> {
               tooltip: '辅助对话',
               onPressed: _openSideChat,
             ),
-          IconButton(
-            icon: const Icon(Icons.tune, size: 20),
-            tooltip: '模型 / 模式',
-            onPressed: _showModelSheet,
-          ),
           if (state != null)
             PopupMenuButton<String>(
               onSelected: (action) {
@@ -1565,7 +1594,7 @@ class _ChatPageState extends State<ChatPage> {
                     TextButton(onPressed: _subscribe, child: const Text('重试')),
               ),
             ),
-          if (state != null)
+          if (state != null && !widget.isSideChat)
             AnimatedBuilder(
               animation: state,
               builder: (context, _) => _ContextUsageBar(state: state),
@@ -1737,7 +1766,6 @@ class _ChatPageState extends State<ChatPage> {
             modeChip: _buildModeChip(),
             modelChip: _buildModelChip(),
             thoughtChip: _buildThoughtChip(),
-            onMoreSettings: _showModelSheet,
           ),
         ],
       ),
@@ -2926,14 +2954,61 @@ class _ToolCallTile extends StatefulWidget {
 class _ToolCallTileState extends State<_ToolCallTile> {
   bool _expanded = false;
 
+  /// Same chevron policy as the reasoning tile (official behavior: chevron
+  /// default-hidden, revealed on interaction, fades after a few seconds):
+  /// visible while running, revealed on toggle, then fades out.
+  bool _chevronVisible = false;
+  Timer? _chevronTimer;
+
+  static const _chevronFade = Duration(seconds: 3);
+
   @override
   void initState() {
     super.initState();
     // 官方行为：运行中/等待确认的工具默认展开详情。
     final status = widget.row['status'] as String? ?? '';
-    _expanded = status == 'running' ||
+    final running = status == 'running' ||
         status == 'inputStreaming' ||
         status == 'pendingApproval';
+    _expanded = running;
+    _chevronVisible = running;
+  }
+
+  @override
+  void didUpdateWidget(_ToolCallTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final wasRunning = _chevronVisible;
+    final status = widget.row['status'] as String? ?? '';
+    final running = status == 'running' ||
+        status == 'inputStreaming' ||
+        status == 'pendingApproval';
+    if (running && !wasRunning) {
+      setState(() => _chevronVisible = true);
+    } else if (!running && wasRunning) {
+      _scheduleChevronFade();
+    }
+  }
+
+  void _toggle() {
+    if (!mounted) return;
+    setState(() {
+      _expanded = !_expanded;
+      _chevronVisible = true;
+    });
+    _scheduleChevronFade();
+  }
+
+  void _scheduleChevronFade() {
+    _chevronTimer?.cancel();
+    _chevronTimer = Timer(_chevronFade, () {
+      if (mounted) setState(() => _chevronVisible = false);
+    });
+  }
+
+  @override
+  void dispose() {
+    _chevronTimer?.cancel();
+    super.dispose();
   }
 
   /// Official kind labels — 「终端」 verified against the real light-theme
@@ -3068,10 +3143,12 @@ class _ToolCallTileState extends State<_ToolCallTile> {
 
     // 官方 ToolLayout（浅色实测）：无卡片容器的单行灰字——专属图标 +
     // kind 标签 + `·` + 摘要（+ diff 计数），完成态无状态文字，整行
-    // 点击展开左竖线详情。
+    // 点击展开左竖线详情。行随内容收拢（mainAxisSize.min），chevron
+    // 贴在文本右侧而非顶到行尾，且仅操作后短暂出现。
     final header = Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
           Icon(kindIcon,
               size: 14,
@@ -3089,48 +3166,48 @@ class _ToolCallTileState extends State<_ToolCallTile> {
             const SizedBox(width: 7),
             Text('·', style: TextStyle(fontSize: 12, color: ZInk.faint(context))),
             const SizedBox(width: 7),
-            Expanded(
-              child: Row(
-                children: [
-                  Flexible(
-                    child: Text(
-                      primary,
-                      style: TextStyle(fontSize: 13, color: ZInk.muted(context)),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  if (added > 0 || removed > 0) ...[
-                    const SizedBox(width: 8),
-                    Text('+$added',
-                        style: TextStyle(
-                            fontFamily: 'monospace',
-                            fontSize: 12,
-                            color: ZInk.diffAdded(context))),
-                    const SizedBox(width: 5),
-                    Text('-$removed',
-                        style: TextStyle(
-                            fontFamily: 'monospace',
-                            fontSize: 12,
-                            color: ZInk.diffRemoved(context))),
-                  ],
-                ],
+            Flexible(
+              child: Text(
+                primary,
+                style: TextStyle(fontSize: 13, color: ZInk.muted(context)),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
             ),
-          ] else
-            const Spacer(),
+            if (added > 0 || removed > 0) ...[
+              const SizedBox(width: 8),
+              Text('+$added',
+                  style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                      color: ZInk.diffAdded(context))),
+              const SizedBox(width: 5),
+              Text('-$removed',
+                  style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                      color: ZInk.diffRemoved(context))),
+            ],
+          ],
           if (statusLabel != null)
             Padding(
               padding: const EdgeInsets.only(left: 7),
               child: Text(statusLabel,
                   style: TextStyle(fontSize: 12, color: statusColor)),
             ),
-          if (hasDetails && _expanded)
-            Padding(
-              padding: const EdgeInsets.only(left: 5),
-              child: Icon(Icons.expand_less,
-                  size: 15, color: ZInk.faint(context)),
+          if (hasDetails) ...[
+            const SizedBox(width: 6),
+            AnimatedOpacity(
+              opacity: _chevronVisible ? 1 : 0,
+              duration: const Duration(milliseconds: 250),
+              child: AnimatedRotation(
+                turns: _expanded ? 0.5 : 0,
+                duration: const Duration(milliseconds: 150),
+                child: Icon(Icons.expand_more,
+                    size: 15, color: ZInk.faint(context)),
+              ),
             ),
+          ],
         ],
       ),
     );
@@ -3153,7 +3230,7 @@ class _ToolCallTileState extends State<_ToolCallTile> {
         children: [
           GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTap: hasDetails ? () => setState(() => _expanded = !_expanded) : null,
+            onTap: hasDetails ? _toggle : null,
             child: header,
           ),
           if (_expanded && hasDetails)
@@ -4783,602 +4860,6 @@ class _QuestionItemState extends State<_QuestionItem> {
 
 // ---------------------------------------------------------------- sheets
 
-class _ModelModeSheet extends StatelessWidget {
-  final ConversationState? state;
-  final ConversationTransport transport;
-  final WorkspacePrep? prep;
-  final String? sessionId;
-  final Map<String, String>? draftConfig;
-  final void Function(String key, String value)? onDraftChange;
-
-  const _ModelModeSheet({
-    required this.state,
-    required this.transport,
-    this.prep,
-    this.sessionId,
-    this.draftConfig,
-    this.onDraftChange,
-  });
-
-  bool get _isDraft => sessionId == null || sessionId!.isEmpty;
-
-  /// Config options beyond the model/mode/thought selects (e.g. max output
-  /// length, search enhancement) surfaced read-only from prepareWorkspace.
-  List<ConfigOption> get _otherOptions {
-    const known = {'model', 'mode', 'thought_level'};
-    final options = prep?.configOptions;
-    if (options == null) return const [];
-    return options.where((o) => !known.contains(o.id)).toList();
-  }
-
-  /// 'builtin:zai-coding-plan/GLM-5.2' → (provider, model)
-  (String, String) _splitModelValue(String value) {
-    final idx = value.lastIndexOf('/');
-    if (idx <= 0) return (value, value);
-    return (value.substring(0, idx), value.substring(idx + 1));
-  }
-
-  // ------------------------------------------------------- mode presentation
-
-  static const _modeLabels = {
-    'build': '构建',
-    'edit': '编辑',
-    'plan': '计划',
-    'yolo': 'Full Access',
-  };
-
-  static const _modeDescriptions = {
-    'build': '标准协作：读写文件、执行命令、完成任务',
-    'edit': '聚焦编辑：专注修改文件，能力范围更可控',
-    'plan': '只读规划：先讨论和制定计划，不动代码',
-    'yolo': '完全访问：自动批准全部操作，无需逐项确认',
-  };
-
-  static bool _isFullAccessMode(String value) =>
-      value == 'yolo' || value.toLowerCase() == 'fullaccess';
-
-  static String _modeLabelOf(String value, {required String fallbackName}) {
-    final mapped = _modeLabels[value.trim().toLowerCase()];
-    return mapped ?? (fallbackName.isNotEmpty ? fallbackName : value);
-  }
-
-  static String? _modeDescriptionOf(String value, String? desktopDescription) {
-    if (desktopDescription != null && desktopDescription.isNotEmpty) {
-      return desktopDescription;
-    }
-    return _modeDescriptions[value.trim().toLowerCase()];
-  }
-
-  /// Full Access ink: deep orange on light theme, light orange on dark.
-  static Color _fullAccessInk(BuildContext context) =>
-      Theme.of(context).brightness == Brightness.light
-          ? ZColors.fullAccessDeep
-          : ZColors.fullAccess;
-
-  Widget _modeChip(
-    BuildContext context, {
-    required String value,
-    required bool selected,
-  }) {
-    final isFull = _isFullAccessMode(value);
-    return ChoiceChip(
-      label: Text(
-        _modeLabelOf(value, fallbackName: value),
-        style: TextStyle(
-          fontSize: 13,
-          color: isFull ? _fullAccessInk(context) : null,
-          fontWeight: isFull ? FontWeight.w600 : null,
-        ),
-      ),
-      selected: selected,
-      onSelected: (_) {
-        if (_isDraft) {
-          onDraftChange?.call('mode', value);
-        } else {
-          _apply(
-            context,
-            () => transport.switchCollaborationMode(sessionId ?? '', value),
-          );
-        }
-      },
-      backgroundColor:
-          isFull ? ZColors.fullAccess.withValues(alpha: 0.12) : null,
-      selectedColor:
-          isFull ? ZColors.fullAccess.withValues(alpha: 0.30) : null,
-      side: isFull
-          ? BorderSide(
-              color: ZColors.fullAccess.withValues(
-                  alpha: selected ? 0.85 : 0.5),
-              width: selected ? 1.4 : 1,
-            )
-          : null,
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final sid = sessionId ?? '';
-    final config = state?.config ?? const {};
-    final modelOption = prep?.option('model');
-    final modeOption = prep?.option('mode');
-    final thoughtOption = prep?.option('thought_level');
-    final followup = '${config['followupMode'] ?? 'queue'}';
-
-    // Current selection: prefer the LIVE session config (updates after a
-    // switch), fall back to prepareWorkspace's currentValue / draft.
-    final liveModelValue =
-        '${config['provider'] ?? ''}/${config['model'] ?? ''}';
-    final currentModelValue =
-        _isDraft || config['model'] == null || '${config['model']}'.isEmpty
-            ? (draftConfig?['model'] ?? '${modelOption?.currentValue ?? ''}')
-            : liveModelValue;
-    final currentThoughtValue = _isDraft
-        ? (draftConfig?['thought'] ?? '${thoughtOption?.currentValue ?? ''}')
-        : (state?.currentThought.isNotEmpty == true
-            ? state!.currentThought
-            : '${thoughtOption?.currentValue ?? ''}');
-    final currentModeValue = _isDraft
-        ? (draftConfig?['mode'] ?? 'build')
-        : state?.currentMode ?? 'build';
-
-    return SafeArea(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(_isDraft ? '新会话 · 模型与模式' : '模型与模式',
-                style:
-                    const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 16),
-            if (modelOption != null && modelOption.options.isNotEmpty) ...[
-              _ModelPickerSection(
-                modelOption: modelOption,
-                currentModelValue: currentModelValue,
-                isDraft: _isDraft,
-                state: state,
-                transport: transport,
-                prep: prep,
-                sessionId: sessionId,
-                onDraftChange: onDraftChange,
-                apply: _apply,
-              ),
-              const SizedBox(height: 12),
-            ] else
-              Text('当前模型: ${state?.currentModel ?? ''}',
-                  style: TextStyle(fontSize: 12, color: ZInk.muted(context))),
-            if (thoughtOption != null && thoughtOption.options.isNotEmpty) ...[
-              Text(thoughtOption.name, style: const TextStyle(fontSize: 13)),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                children: [
-                  for (final v in thoughtOption.options)
-                    ChoiceChip(
-                      label: Text(v.name),
-                      selected: currentThoughtValue == v.value ||
-                          state?.currentThought == v.value,
-                      onSelected: (_) {
-                        if (_isDraft) {
-                          onDraftChange?.call('thought', v.value);
-                        } else {
-                          final modelValue = currentModelValue;
-                          final (provider, model) = modelValue.isNotEmpty
-                              ? _splitModelValue(modelValue)
-                              : (
-                                  '${config['provider'] ?? ''}',
-                                  '${config['model'] ?? ''}'
-                                );
-                          _apply(
-                            context,
-                            () => transport.switchModelConfig(
-                              sid,
-                              provider: provider,
-                              model: model,
-                              thought: v.value,
-                            ),
-                            onAccepted: () => state?.optimisticPatch({
-                              'config': {
-                                ...?state!.config,
-                                'thought': v.value,
-                              },
-                            }),
-                          );
-                        }
-                      },
-                    ),
-                ],
-              ),
-            ] else if ((state?.thoughtLevels ?? const []).isNotEmpty) ...[
-              const Text('思考等级', style: TextStyle(fontSize: 13)),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                children: [
-                  for (final level in state!.thoughtLevels)
-                    ChoiceChip(
-                      label: Text(level),
-                      selected: state?.currentThought == level,
-                      onSelected: (_) => _apply(
-                        context,
-                        () => transport.switchModelConfig(
-                          sid,
-                          provider: '${config['provider'] ?? ''}',
-                          model: '${config['model'] ?? ''}',
-                          thought: level,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ],
-            const SizedBox(height: 16),
-            const Text('协作模式', style: TextStyle(fontSize: 13)),
-            const SizedBox(height: 8),
-            if (modeOption != null && modeOption.options.isNotEmpty)
-              for (final v in modeOption.options)
-                Builder(builder: (context) {
-                  final isFull = _isFullAccessMode(v.value);
-                  return ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(
-                      currentModeValue == v.value
-                          ? Icons.radio_button_checked
-                          : Icons.radio_button_off,
-                      size: 18,
-                      color: isFull
-                          ? _fullAccessInk(context)
-                          : (currentModeValue == v.value
-                              ? ZColors.primary
-                              : ZInk.ghost(context)),
-                    ),
-                    title: Text(
-                      _modeLabelOf(v.value, fallbackName: v.name),
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: isFull ? FontWeight.w600 : null,
-                        color: isFull ? _fullAccessInk(context) : null,
-                      ),
-                    ),
-                    subtitle: _modeDescriptionOf(v.value, v.description) != null
-                        ? Text(
-                            _modeDescriptionOf(v.value, v.description)!,
-                            style: TextStyle(
-                                fontSize: 11, color: ZInk.faint(context)),
-                          )
-                        : null,
-                    onTap: () {
-                      if (_isDraft) {
-                        onDraftChange?.call('mode', v.value);
-                      } else {
-                        _apply(
-                          context,
-                          () =>
-                              transport.switchCollaborationMode(sid, v.value),
-                          onAccepted: () => state?.optimisticPatch({
-                            'config': {
-                              ...?state!.config,
-                              'mode': v.value,
-                            },
-                          }),
-                        );
-                      }
-                    },
-                  );
-                })
-            else
-              Wrap(
-                spacing: 8,
-                children: [
-                  for (final m in const ['build', 'edit', 'plan', 'yolo'])
-                    _modeChip(
-                      context,
-                      value: m,
-                      selected: currentModeValue == m,
-                    ),
-                ],
-              ),
-            if (!_isDraft) ...[
-              const SizedBox(height: 16),
-              const Text('后续消息', style: TextStyle(fontSize: 13)),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                children: [
-                  for (final f in const ['queue', 'guide'])
-                    ChoiceChip(
-                      label: Text(f == 'queue' ? '排队' : '引导'),
-                      selected: followup == f,
-                      onSelected: (_) => _apply(
-                        context,
-                        () => transport.setFollowupMode(sid, f),
-                        onAccepted: () => state?.optimisticPatch({
-                          'config': {
-                            ...?state!.config,
-                            'followupMode': f,
-                          },
-                        }),
-                      ),
-                    ),
-                ],
-              ),
-            ],
-            if (_otherOptions.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              const Text('其他配置', style: TextStyle(fontSize: 13)),
-              const SizedBox(height: 8),
-              for (final o in _otherOptions)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child:
-                            Text(o.name, style: const TextStyle(fontSize: 13)),
-                      ),
-                      const SizedBox(width: 8),
-                      Text('${o.currentValue}',
-                          style: TextStyle(
-                              fontSize: 12, color: ZInk.muted(context))),
-                    ],
-                  ),
-                ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _apply(
-    BuildContext context,
-    Future<dynamic> Function() run, {
-    void Function()? onAccepted,
-  }) async {
-    try {
-      final res = await run();
-      if (context.mounted) {
-        if (res is Map &&
-            res['status'] != null &&
-            res['status'] != 'accepted') {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: Text('被拒绝: ${res['reasonCode'] ?? res['status']}')));
-        } else {
-          onAccepted?.call();
-          Navigator.pop(context);
-        }
-      }
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('失败: $e')));
-      }
-    }
-  }
-}
-
-/// Two-level model picker: level 1 lists providers (with model count and the
-/// current model), level 2 lists the chosen provider's models. Falls back to
-/// a flat list when grouping is meaningless (single provider, or every model
-/// carries no provider info).
-class _ModelPickerSection extends StatefulWidget {
-  final ConfigOption modelOption;
-  final String currentModelValue;
-  final bool isDraft;
-  final ConversationState? state;
-  final ConversationTransport transport;
-  final WorkspacePrep? prep;
-  final String? sessionId;
-  final void Function(String key, String value)? onDraftChange;
-  final Future<void> Function(
-    BuildContext context,
-    Future<dynamic> Function() run, {
-    void Function()? onAccepted,
-  }) apply;
-
-  const _ModelPickerSection({
-    required this.modelOption,
-    required this.currentModelValue,
-    required this.isDraft,
-    required this.transport,
-    required this.apply,
-    this.state,
-    this.prep,
-    this.sessionId,
-    this.onDraftChange,
-  });
-
-  @override
-  State<_ModelPickerSection> createState() => _ModelPickerSectionState();
-}
-
-class _ModelPickerSectionState extends State<_ModelPickerSection> {
-  /// Provider currently drilled into; null shows the provider list.
-  String? _openProvider;
-
-  /// 'builtin:zai-coding-plan/GLM-5.2' → 'builtin:zai-coding-plan'
-  static String _providerSegment(String value) {
-    final idx = value.lastIndexOf('/');
-    return idx <= 0 ? value : value.substring(0, idx);
-  }
-
-  /// Prefer the desktop-provided provider name; derive from the value's
-  /// provider segment when it is missing (older desktops).
-  String _providerKeyOf(ConfigOptionValue v) =>
-      v.modelProviderName ?? _providerSegment(v.value);
-
-  /// Provider groups keyed in first-appearance order.
-  Map<String, List<ConfigOptionValue>> get _groups {
-    final groups = <String, List<ConfigOptionValue>>{};
-    for (final v in widget.modelOption.options) {
-      groups.putIfAbsent(_providerKeyOf(v), () => []).add(v);
-    }
-    return groups;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(widget.modelOption.name, style: const TextStyle(fontSize: 13)),
-        const SizedBox(height: 8),
-        ..._buildBody(context),
-      ],
-    );
-  }
-
-  List<Widget> _buildBody(BuildContext context) {
-    final groups = _groups;
-    // Degenerate grouping (single provider, or every model standalone) ->
-    // keep the flat list; an accordion would add a pointless tap.
-    if (groups.length < 2 ||
-        groups.length >= widget.modelOption.options.length) {
-      return [
-        _modelList(groups.values.expand((m) => m).toList(),
-            showProviderSubtitle: true),
-      ];
-    }
-    // Accordion: tapping a provider expands its model list in place; at
-    // most one section is open at a time. Every group keeps its AnimatedSize
-    // mounted so collapse animates too (child swaps to a zero-height box).
-    final widgets = <Widget>[];
-    for (final g in groups.entries) {
-      final expanded = _openProvider == g.key;
-      widgets.add(_providerRow(context, g, expanded: expanded));
-      widgets.add(
-        AnimatedSize(
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOutCubic,
-          alignment: Alignment.topCenter,
-          child: expanded
-              ? Padding(
-                  padding: const EdgeInsets.only(left: 18),
-                  child: _modelList(g.value, showProviderSubtitle: false),
-                )
-              : const SizedBox(width: double.infinity),
-        ),
-      );
-    }
-    return widgets;
-  }
-
-  Widget _providerRow(BuildContext context,
-      MapEntry<String, List<ConfigOptionValue>> group,
-      {required bool expanded}) {
-    final isCurrent =
-        group.value.any((v) => v.value == widget.currentModelValue);
-    final current = isCurrent
-        ? group.value.firstWhere((v) => v.value == widget.currentModelValue)
-        : null;
-    return ListTile(
-      dense: true,
-      contentPadding: EdgeInsets.zero,
-      leading: Icon(
-        isCurrent ? Icons.radio_button_checked : Icons.radio_button_off,
-        size: 18,
-        color: isCurrent ? ZColors.primary : ZInk.ghost(context),
-      ),
-      title: Text(group.key,
-          style: TextStyle(
-              fontSize: 13,
-              fontWeight: expanded ? FontWeight.w600 : null,
-              color: ZInk.soft(context))),
-      subtitle: Text(
-        isCurrent && current != null
-            ? '当前 · ${current.name}'
-            : '${group.value.length} 个模型',
-        style: TextStyle(fontSize: 11, color: ZInk.faint(context)),
-      ),
-      trailing: AnimatedRotation(
-        turns: expanded ? 0.25 : 0,
-        duration: const Duration(milliseconds: 200),
-        child: Icon(
-          Icons.chevron_right,
-          size: 18,
-          color: ZInk.ghost(context),
-        ),
-      ),
-      onTap: () =>
-          setState(() => _openProvider = expanded ? null : group.key),
-    );
-  }
-
-  Widget _modelList(List<ConfigOptionValue> models,
-      {required bool showProviderSubtitle}) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        for (final v in models) _modelRow(v, showProviderSubtitle),
-      ],
-    );
-  }
-
-  Widget _modelRow(ConfigOptionValue v, bool showProviderSubtitle) {
-    final isCurrent = widget.currentModelValue == v.value;
-    return ListTile(
-      dense: true,
-      contentPadding: EdgeInsets.zero,
-      leading: Icon(
-        isCurrent ? Icons.radio_button_checked : Icons.radio_button_off,
-        size: 18,
-        color: isCurrent ? ZColors.primary : ZInk.ghost(context),
-      ),
-      title: Text(v.name, style: const TextStyle(fontSize: 13)),
-      subtitle: showProviderSubtitle && v.modelProviderName != null
-          ? Text(v.modelProviderName!,
-              style: TextStyle(fontSize: 11, color: ZInk.faint(context)))
-          : null,
-      onTap: () => _selectModel(v),
-    );
-  }
-
-  void _selectModel(ConfigOptionValue v) {
-    if (widget.isDraft) {
-      widget.onDraftChange?.call('model', v.value);
-      return;
-    }
-    final sid = widget.sessionId ?? '';
-    final (provider, model) = _splitPair(v.value);
-    // thought must be valid for the target model: keep current if supported,
-    // else fall back to the thought option's currentValue (Turbo: enabled/off)
-    final currentThought = widget.state?.currentThought ?? '';
-    final thoughtOpt = widget.prep?.option('thought_level');
-    final thought = currentThought.isNotEmpty &&
-            (thoughtOpt?.options.any((o) => o.value == currentThought) ??
-                false)
-        ? currentThought
-        : '${thoughtOpt?.currentValue ?? (currentThought.isNotEmpty ? currentThought : 'enabled')}';
-    widget.apply(
-      context,
-      () => widget.transport.switchModelConfig(
-        sid,
-        provider: provider,
-        model: model,
-        thought: thought,
-      ),
-      onAccepted: () => widget.state?.optimisticPatch({
-        'config': {
-          ...?widget.state!.config,
-          'provider': provider,
-          'model': model,
-          'thought': thought,
-        },
-      }),
-    );
-  }
-
-  static (String, String) _splitPair(String value) {
-    final idx = value.lastIndexOf('/');
-    if (idx <= 0) return (value, value);
-    return (value.substring(0, idx), value.substring(idx + 1));
-  }
-}
-
 class _UsageSheet extends StatelessWidget {
   final ConversationState state;
   final BridgeSession session;
@@ -5540,6 +5021,19 @@ class _SlashItem {
   });
 }
 
+/// Match score of slash/command [name] against the typed query [q] (both
+/// lowercase): 0 = prefix, 1 = at a word boundary (-_./: space), 2 = plain
+/// substring, null = no match. Lower is a better match.
+int? slashCommandMatchScore(String name, String q) {
+  if (q.isEmpty) return 0;
+  final prefix = name.indexOf(q);
+  if (prefix < 0) return null;
+  if (prefix == 0) return 0;
+  const boundaries = {'-', '_', '.', '/', ':', ' '};
+  if (boundaries.contains(name[prefix - 1])) return 1;
+  return 2;
+}
+
 class _SlashCommandBar extends StatelessWidget {
   final String query;
   final List<_SlashItem> items;
@@ -5556,11 +5050,22 @@ class _SlashCommandBar extends StatelessWidget {
     final q = query.startsWith('/') || query.startsWith('\$')
         ? query.substring(1)
         : query;
-    final filtered = q.isEmpty
-        ? items
-        : items
-            .where((c) => c.name.toLowerCase().startsWith(q.toLowerCase()))
-            .toList();
+    // Best matches first: prefix > word-boundary > substring (stable within
+    // a score class by name length, then alphabetically).
+    final ql = q.toLowerCase();
+    final scored = <(_SlashItem, int)>[];
+    for (final item in items) {
+      final score = slashCommandMatchScore(item.name.toLowerCase(), ql);
+      if (score != null) scored.add((item, score));
+    }
+    scored.sort((a, b) {
+      final byScore = a.$2.compareTo(b.$2);
+      if (byScore != 0) return byScore;
+      final byLen = a.$1.name.length.compareTo(b.$1.name.length);
+      if (byLen != 0) return byLen;
+      return a.$1.name.compareTo(b.$1.name);
+    });
+    final filtered = scored.map((s) => s.$1).toList();
     if (filtered.isEmpty) {
       return Container(
         margin: const EdgeInsets.fromLTRB(14, 4, 14, 0),
@@ -5709,7 +5214,6 @@ class _InputBar extends StatefulWidget {
   final Widget modeChip;
   final Widget modelChip;
   final Widget thoughtChip;
-  final VoidCallback? onMoreSettings;
 
   const _InputBar({
     required this.controller,
@@ -5724,7 +5228,6 @@ class _InputBar extends StatefulWidget {
     required this.modeChip,
     required this.modelChip,
     required this.thoughtChip,
-    this.onMoreSettings,
   });
 
   @override
@@ -5759,11 +5262,15 @@ class _InputBarState extends State<_InputBar> {
                       minLines: 1,
                       maxLines: 5,
                       style: const TextStyle(fontSize: 14),
-                      decoration: const InputDecoration(
+                      // filled:false — the global input theme paints fields
+                      // with the surface color, which visually split the
+                      // text area from the toolbar sharing this container.
+                      decoration: InputDecoration(
                         hintText: '向 ZCode 发送消息…',
+                        filled: false,
                         border: InputBorder.none,
                         isDense: true,
-                        contentPadding: EdgeInsets.symmetric(
+                        contentPadding: const EdgeInsets.symmetric(
                             horizontal: 10, vertical: 12),
                       ),
                       textInputAction: TextInputAction.newline,
@@ -5811,32 +5318,10 @@ class _InputBarState extends State<_InputBar> {
                   widget.modelChip,
                   const SizedBox(width: 6),
                   widget.thoughtChip,
-                  IconButton(
-                    visualDensity: VisualDensity.compact,
-                    icon: Icon(Icons.tune,
-                        size: 18, color: ZInk.muted(context)),
-                    tooltip: '更多设置',
-                    onPressed: widget.onMoreSettings,
-                  ),
-                  const SizedBox(width: 2),
-                  Container(
-                    decoration: BoxDecoration(
-                      color: ZColors.primary,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: IconButton(
-                      visualDensity: VisualDensity.compact,
-                      onPressed: widget.sending ? null : widget.onSend,
-                      icon: widget.sending
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 2, color: Colors.white),
-                            )
-                          : const Icon(Icons.arrow_upward,
-                              color: Colors.white, size: 19),
-                    ),
+                  const SizedBox(width: 4),
+                  _SendButton(
+                    sending: widget.sending,
+                    onSend: widget.onSend,
                   ),
                 ],
               ),
@@ -5883,6 +5368,54 @@ class _InputBarState extends State<_InputBar> {
                 ],
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Composer send button — official web style: a solid circle in the ink
+/// color (dark theme: white circle / dark arrow; light: near-black circle /
+/// white arrow), fading when disabled.
+class _SendButton extends StatelessWidget {
+  final bool sending;
+  final VoidCallback onSend;
+
+  const _SendButton({required this.sending, required this.onSend});
+
+  @override
+  Widget build(BuildContext context) {
+    final ink = ZInk.solid(context);
+    return Opacity(
+      opacity: sending ? 0.45 : 1,
+      child: Material(
+        color: ink,
+        shape: const CircleBorder(),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: sending ? null : onSend,
+          child: SizedBox(
+            width: 32,
+            height: 32,
+            child: Center(
+              child: sending
+                  ? SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: ZInk.solid(context) == Colors.white
+                            ? Colors.black
+                            : Colors.white,
+                      ),
+                    )
+                  : Icon(Icons.arrow_upward,
+                      size: 18,
+                      color: ZInk.solid(context) == Colors.white
+                          ? Colors.black
+                          : Colors.white),
+            ),
           ),
         ),
       ),

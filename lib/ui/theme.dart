@@ -56,6 +56,10 @@ class ZColors {
   static const composerDark = Color(0xFF2B2B2B);
   static const composerLight = Color(0xFFFFFFFF);
 
+  /// Sidebar surface (official web `--color-sidebar`: #202020 on dark;
+  /// the light theme stays white like the rest of the chrome).
+  static const sidebarDark = Color(0xFF202020);
+
   // ---- Conversation-page constants translated from the official web CSS
   // variables (theme-zai-dark / theme-zai-light tokens in the bundle CSS).
 
@@ -149,6 +153,10 @@ class ZInk {
   /// Visible panel outline in both themes.
   static Color panelBorder(BuildContext context) =>
       _isLight(context) ? const Color(0xFFB8C7DD) : const Color(0xFF344563);
+
+  /// Sidebar surface (official `--color-sidebar` token).
+  static Color sidebar(BuildContext context) =>
+      _isLight(context) ? Colors.white : ZColors.sidebarDark;
 
   /// Reasoning-specific fill, visually distinct from tool output.
   static Color reasoningPanel(BuildContext context) =>

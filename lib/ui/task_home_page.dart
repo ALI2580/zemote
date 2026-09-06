@@ -110,6 +110,18 @@ class _TaskHomePageState extends State<TaskHomePage>
   String _statusFilter = 'all';
   bool _searchOpen = false;
   StreamSubscription? _updatedSub;
+
+  /// Tablet master-detail (width >= 900): the tapped task opens in the
+  /// right pane instead of pushing a route. `_draftSerial` forces a fresh
+  /// ChatPage each time 新建任务 is tapped in draft mode.
+  String? _inlineTaskId;
+  String? _inlineTaskTitle;
+  int _draftSerial = 0;
+  int _inlineDraft = 0;
+
+  bool get _masterDetail =>
+      MediaQuery.sizeOf(context).width >= 900;
+
   ConversationTransport? _convTransport;
   SessionsIndexSubscription? _sessionsSub;
   final _cache = const SessionListCache();
@@ -352,6 +364,13 @@ class _TaskHomePageState extends State<TaskHomePage>
     final taskId = task['taskId'] ?? task['id'];
     if (taskId == null) return;
     _markRead(task);
+    if (_masterDetail) {
+      setState(() {
+        _inlineTaskId = '$taskId';
+        _inlineTaskTitle = _taskTitle(task);
+      });
+      return;
+    }
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => ChatPage(
@@ -578,6 +597,15 @@ class _TaskHomePageState extends State<TaskHomePage>
 
   Future<void> _newChat() async {
     if (_workspaceKey.isEmpty) return;
+    if (_masterDetail) {
+      setState(() {
+        _draftSerial++;
+        _inlineTaskId = null;
+        _inlineTaskTitle = '新任务';
+        _inlineDraft = _draftSerial;
+      });
+      return;
+    }
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => ChatPage(
@@ -760,7 +788,7 @@ class _TaskHomePageState extends State<TaskHomePage>
 
   @override
   Widget build(BuildContext context) {
-    return Column(
+    final listPane = Column(
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 6, 8, 2),
@@ -901,6 +929,50 @@ class _TaskHomePageState extends State<TaskHomePage>
                     ),
         ),
       ],
+    );
+    if (!_masterDetail) return listPane;
+    // Official-web wide layout: task list on the left, chat on the right.
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(width: 360, child: listPane),
+        VerticalDivider(width: 1, color: ZInk.hairline(context)),
+        Expanded(child: _buildDetailPane()),
+      ],
+    );
+  }
+
+  Widget _buildDetailPane() {
+    final draftMode = _inlineTaskId == null && _inlineTaskTitle != null;
+    if (_inlineTaskId == null && !draftMode) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.chat_bubble_outline,
+                size: 42, color: ZInk.ghost(context)),
+            const SizedBox(height: 12),
+            Text('从左侧选择任务，或新建一个任务',
+                style: TextStyle(color: ZInk.muted(context), fontSize: 13)),
+          ],
+        ),
+      );
+    }
+    return KeyedSubtree(
+      key: ValueKey(_inlineTaskId ?? 'draft-$_inlineDraft'),
+      child: ChatPage(
+        session: widget.session,
+        scope: _scope,
+        workspaceKey: _workspaceKey,
+        sessionId: _inlineTaskId,
+        title: _inlineTaskTitle ?? '新任务',
+        automaticallyImplyLeading: false,
+        onSessionCreated: (sessionId) {
+          setState(() => _inlineTaskId = sessionId);
+          _load();
+          _mergeSessions();
+        },
+      ),
     );
   }
 }

@@ -103,9 +103,15 @@ setUp(() {
 
 ## 本机开发环境注意事项
 
-- **本机没有 Flutter SDK**（`flutter`/`dart` 均不在 PATH，无 pub cache），源码副本无法
-  本地跑 `flutter analyze` / `flutter test`。Dart 改动的门禁是 CI（push 触发 ci.yml）；
-  本地只能做静态自查：调用点与签名对齐、既有引用无悬空、无新依赖。UI 改动建议配合
-  Web 端或真机手动验证。
+- **本机已有 Flutter SDK（2026-09-06 起）**：`D:\SoftWare\Develop\flutter`（3.47.2 stable，
+  Dart 3.13.2）。Git Bash 里 `export PATH="/d/SoftWare/Develop/flutter/bin:$PATH"` 后可
+  直接跑 `flutter analyze`（约 7s）/ `flutter test`（秒级）——**改码后先本地 analyze 再
+  推送，不要再用 CI 盲猜 lint**（0.5.7/0.6.0 都因盲猜多跑过红 CI）。
+- 注意 `flutter pub get` 会重新生成 `windows/flutter/generated_*`（本地插件注册），
+  属正常变更可一并提交。
+- UI 改动建议配合 MuMu 12 模拟器验证：`/d/SoftWare/Common/Mumu/emulator/MuMuPlayer-12.0/shell/adb.exe`
+  （emulator-5554），装 x86_64 APK；连接凭据走 app 内"粘贴链接添加"，`adb shell input text`
+  输入 URL 时用单引号保护 `&`。桌面端单设备限制：MuMu 连接会挤掉用户真机——
+  **验证完成后不要反复抢占连接**。
 - 本仓库 git 由源码副本新初始化，远程历史是镜像的原作者提交；推送走 SSH
   （公钥 `zemote-dev-rog-strix` 已注册到 GitHub 账号）。

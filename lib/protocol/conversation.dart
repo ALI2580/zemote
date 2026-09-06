@@ -1178,6 +1178,10 @@ class ConfigOptionValue {
         name = '${raw['name'] ?? raw['value'] ?? ''}',
         description = raw['description'] as String?,
         modelProviderName = raw['modelProviderName'] as String?;
+
+  /// Test/dev seam mirroring the wire shape, so UI tests can build option
+  /// values without a live prepareWorkspace response.
+  factory ConfigOptionValue.fromRaw(Map raw) => ConfigOptionValue._(raw);
 }
 
 class SlashCommand {

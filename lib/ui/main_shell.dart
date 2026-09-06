@@ -153,10 +153,18 @@ class _MainShellContentState extends State<_MainShellContent> {
   TaskNotifier? _taskNotifier;
   AppLifecycleListener? _lifecycle;
 
+  /// Relay state watcher: on a terminal drop (error / kicked) offer an
+  /// in-place reconnect dialog instead of forcing a trip back to the
+  /// device list. Paired resets the guard so a later drop asks again.
+  RelayState? _lastRelayState;
+  bool _reconnectDialogOpen = false;
+
   @override
   void initState() {
     super.initState();
     _lifecycle = AppLifecycleListener(onResume: widget.client.pokeRelay);
+    _lastRelayState = widget.client.relay.state;
+    widget.client.relay.stateListenable.addListener(_onRelayState);
     _updatedSub = widget.client.workspaceListUpdated.listen((result) {
       if (!mounted || result is! Map) return;
       final list = result['workspaces'];
@@ -168,10 +176,79 @@ class _MainShellContentState extends State<_MainShellContent> {
   @override
   void dispose() {
     _lifecycle?.dispose();
+    widget.client.relay.stateListenable.removeListener(_onRelayState);
     _updatedSub?.cancel();
     _taskNotifier?.dispose();
     _bridge?.dispose();
     super.dispose();
+  }
+
+  void _onRelayState() {
+    final state = widget.client.relay.state;
+    final prev = _lastRelayState;
+    _lastRelayState = state;
+    if (!mounted) return;
+    if (state == RelayState.paired) {
+      _reconnectDialogOpen = false;
+      return;
+    }
+    final dropped =
+        state == RelayState.error || state == RelayState.kicked;
+    final wasDown =
+        prev == RelayState.error || prev == RelayState.kicked;
+    if (dropped && !wasDown && !_reconnectDialogOpen) {
+      _reconnectDialogOpen = true;
+      _showReconnectDialog(state);
+    }
+  }
+
+  /// Ask whether to reconnect right here — the relay itself re-pairs on the
+  /// same client, so pushed pages (chat etc.) survive; only the bridge needs
+  /// its automatic recovery pass afterwards.
+  Future<void> _showReconnectDialog(RelayState state) async {
+    final kicked = state == RelayState.kicked;
+    final reconnect = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('连接已断开'),
+        content: Text(kicked
+            ? '连接已被其他终端挤下线。重新连接可能会再次被挤下线，要尝试吗？'
+            : '与设备的连接已中断。要尝试重新连接吗？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('返回设备列表'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('重新连接'),
+          ),
+        ],
+      ),
+    );
+    _reconnectDialogOpen = false;
+    if (!mounted) return;
+    if (reconnect == true) {
+      await _reconnectInPlace();
+    } else {
+      widget.onDisconnect();
+    }
+  }
+
+  Future<void> _reconnectInPlace() async {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+        const SnackBar(content: Text('正在重新连接…')));
+    try {
+      await widget.client.connect();
+      await widget.client.waitPaired(timeout: const Duration(seconds: 60));
+      messenger.showSnackBar(
+          const SnackBar(content: Text('重新连接成功')));
+    } catch (e) {
+      messenger.showSnackBar(
+          SnackBar(content: Text('重新连接失败: $e')));
+    }
   }
 
   Future<void> _load() async {
@@ -286,6 +363,50 @@ class _MainShellContentState extends State<_MainShellContent> {
   @override
   Widget build(BuildContext context) {
     final bridge = _bridge;
+    final wide = MediaQuery.sizeOf(context).width >= 720;
+    final content = Column(
+      children: [
+        if (!wide) _DeviceSwitcherBar(
+          account: widget.account,
+          onTap: _showDeviceSwitcher,
+        ),
+        _ConnectionBanner(
+          client: widget.client,
+          onRetry: _reconnectInPlace,
+        ),
+        Expanded(
+          child: switch (_tab) {
+            0 => bridge == null
+                ? _WorkspacePicker(
+                    workspaces: _workspaces,
+                    loading: _loading || _bridgeOpening,
+                    error: _error,
+                    client: widget.client,
+                    onRefresh: _load,
+                    onOpen: _openWorkspace,
+                  )
+                : TaskHomePage(
+                    key: ValueKey(
+                        workspaceKeyOf(_activeWorkspace ?? const {})),
+                    workspace: _activeWorkspace!,
+                    session: bridge,
+                    client: widget.client,
+                    workspaces: _workspaces,
+                    onSwitchWorkspace: _closeBridge,
+                  ),
+            _ => SettingsPage(
+                client: widget.client,
+                bridge: bridge,
+                onDisconnect: () {
+                  widget.session.disconnect(widget.account.id);
+                  widget.onDisconnect();
+                },
+                themeController: ThemeControllerProvider.of(context),
+              ),
+          },
+        ),
+      ],
+    );
     return Scaffold(
       body: PopScope(
         // Predictable back behavior instead of silently exiting:
@@ -304,64 +425,44 @@ class _MainShellContentState extends State<_MainShellContent> {
           _confirmExit();
         },
         child: SafeArea(
-          child: Column(
-            children: [
-              _DeviceSwitcherBar(
-                account: widget.account,
-                onTap: _showDeviceSwitcher,
-              ),
-              _ConnectionBanner(client: widget.client),
-              Expanded(
-                child: switch (_tab) {
-                  0 => bridge == null
-                      ? _WorkspacePicker(
-                          workspaces: _workspaces,
-                          loading: _loading || _bridgeOpening,
-                          error: _error,
-                          client: widget.client,
-                          onRefresh: _load,
-                          onOpen: _openWorkspace,
-                        )
-                      : TaskHomePage(
-                          key: ValueKey(
-                              workspaceKeyOf(_activeWorkspace ?? const {})),
-                          workspace: _activeWorkspace!,
-                          session: bridge,
-                          client: widget.client,
-                          workspaces: _workspaces,
-                          onSwitchWorkspace: _closeBridge,
-                        ),
-                  _ => SettingsPage(
+          // Wide screens (tablet / unfolded foldable) get the official-web
+          // sidebar layout: fixed left nav rail + content; phones keep the
+          // bottom navigation bar.
+          child: wide
+              ? Row(
+                  children: [
+                    _SideNav(
+                      account: widget.account,
+                      tab: _tab,
                       client: widget.client,
-                      bridge: bridge,
-                      onDisconnect: () {
-                        widget.session.disconnect(widget.account.id);
-                        widget.onDisconnect();
-                      },
-                      themeController: ThemeControllerProvider.of(context),
+                      onSelect: (i) => setState(() => _tab = i),
+                      onSwitchDevice: _showDeviceSwitcher,
                     ),
-                },
-              ),
-            ],
-          ),
+                    VerticalDivider(width: 1, color: ZInk.hairline(context)),
+                    Expanded(child: content),
+                  ],
+                )
+              : content,
         ),
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _tab,
-        onDestinationSelected: (i) => setState(() => _tab = i),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.forum_outlined),
-            selectedIcon: Icon(Icons.forum),
-            label: '任务',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings),
-            label: '设置',
-          ),
-        ],
-      ),
+      bottomNavigationBar: wide
+          ? null
+          : NavigationBar(
+              selectedIndex: _tab,
+              onDestinationSelected: (i) => setState(() => _tab = i),
+              destinations: const [
+                NavigationDestination(
+                  icon: Icon(Icons.forum_outlined),
+                  selectedIcon: Icon(Icons.forum),
+                  label: '任务',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.settings_outlined),
+                  selectedIcon: Icon(Icons.settings),
+                  label: '设置',
+                ),
+              ],
+            ),
     );
   }
 
@@ -384,6 +485,125 @@ class _MainShellContentState extends State<_MainShellContent> {
     if (exit == true && mounted) {
       Navigator.of(context).pop();
     }
+  }
+}
+
+/// Fixed left sidebar for wide screens (official-web layout): device card
+/// on top, task/settings nav below, connection status at the bottom.
+class _SideNav extends StatelessWidget {
+  final Account account;
+  final int tab;
+  final ZemoteClient client;
+  final ValueChanged<int> onSelect;
+  final VoidCallback onSwitchDevice;
+
+  const _SideNav({
+    required this.account,
+    required this.tab,
+    required this.client,
+    required this.onSelect,
+    required this.onSwitchDevice,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final host = account.params?.source.host ?? '';
+    Widget navTile(int index, IconData icon, IconData selectedIcon,
+        String label) {
+      final selected = tab == index;
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        child: Material(
+          color: selected ? ZInk.tile(context) : Colors.transparent,
+          borderRadius: BorderRadius.circular(10),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onTap: () => onSelect(index),
+            child: Padding(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+              child: Row(
+                children: [
+                  Icon(selected ? selectedIcon : icon,
+                      size: 19,
+                      color: selected
+                          ? ZColors.primary
+                          : ZInk.muted(context)),
+                  const SizedBox(width: 10),
+                  Text(label,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: selected
+                            ? FontWeight.w600
+                            : FontWeight.w400,
+                        color: selected
+                            ? ZInk.solid(context)
+                            : ZInk.soft(context),
+                      )),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      width: 232,
+      color: ZInk.sidebar(context),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            onTap: onSwitchDevice,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 14, 12, 10),
+              child: Row(
+                children: [
+                  Icon(Icons.desktop_windows_outlined,
+                      size: 18, color: ZColors.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(account.label,
+                            style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis),
+                        if (host.isNotEmpty)
+                          Text(host,
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: ZInk.faint(context)),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis),
+                      ],
+                    ),
+                  ),
+                  Icon(Icons.swap_horiz,
+                      size: 16, color: ZInk.muted(context)),
+                ],
+              ),
+            ),
+          ),
+          Divider(height: 1, color: ZInk.hairline(context)),
+          const SizedBox(height: 8),
+          navTile(0, Icons.forum_outlined, Icons.forum, '任务'),
+          navTile(1, Icons.settings_outlined, Icons.settings, '设置'),
+          const Spacer(),
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: _ConnectionDot(client: client),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -696,8 +916,9 @@ class _WorkspacePicker extends StatelessWidget {
 
 class _ConnectionBanner extends StatelessWidget {
   final ZemoteClient client;
+  final Future<void> Function()? onRetry;
 
-  const _ConnectionBanner({required this.client});
+  const _ConnectionBanner({required this.client, this.onRetry});
 
   @override
   Widget build(BuildContext context) {
@@ -713,12 +934,12 @@ class _ConnectionBanner extends StatelessWidget {
           RelayState.error => (
               ZColors.danger,
               Icons.error_outline,
-              '连接失败，请返回设备页重连'
+              '连接失败，点此重试'
             ),
           RelayState.kicked => (
               ZColors.danger,
               Icons.error_outline,
-              '连接已被其他终端挤下线'
+              '连接已被其他终端挤下线，点此重试'
             ),
           RelayState.waiting => (
               ZColors.running,
@@ -728,20 +949,29 @@ class _ConnectionBanner extends StatelessWidget {
           _ => (Colors.transparent, Icons.check, ''),
         };
         if (text.isEmpty) return const SizedBox.shrink();
+        final tappable = onRetry != null &&
+            (state == RelayState.error || state == RelayState.kicked);
         return Container(
           width: double.infinity,
           color: color.withValues(alpha: 0.15),
-          padding:
-              const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-          child: Row(
-            children: [
-              Icon(icon, size: 14, color: color),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(text,
-                    style: TextStyle(fontSize: 12, color: color)),
+          child: InkWell(
+            onTap: tappable ? onRetry : null,
+            child: Padding(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              child: Row(
+                children: [
+                  Icon(icon, size: 14, color: color),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(text,
+                        style: TextStyle(fontSize: 12, color: color)),
+                  ),
+                  if (tappable)
+                    Icon(Icons.refresh, size: 14, color: color),
+                ],
               ),
-            ],
+            ),
           ),
         );
       },
