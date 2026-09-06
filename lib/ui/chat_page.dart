@@ -2970,10 +2970,10 @@ class _TurnHeader extends StatelessWidget {
   String _fmtDuration(int? ms) {
     if (ms == null) return '';
     if (ms < 1000) return '${ms}ms';
-    final s = ms / 1000;
-    if (s < 60) return '${s.toStringAsFixed(1)}s';
-    final m = s ~/ 60;
-    return '${m}m${(s % 60).round()}s';
+    final totalSeconds = (ms / 1000).round();
+    if (totalSeconds < 60) return '${(ms / 1000).toStringAsFixed(1)}s';
+    final m = totalSeconds ~/ 60;
+    return '${m}m${totalSeconds % 60}s';
   }
 
   @override
@@ -4171,9 +4171,7 @@ class _InteractionCardState extends State<_InteractionCard> {
                     _PermissionOption(
                       index: i,
                       label: _optionLabel(options[i] as Map),
-                      description: kind == 'permission'
-                          ? (options[i]['description'] as String? ?? '')
-                          : '',
+                      description: _optionDescription(options[i] as Map),
                       busy: _busy,
                       onTap: () => kind == 'permission'
                           ? _resolve(
@@ -4219,17 +4217,50 @@ class _InteractionCardState extends State<_InteractionCard> {
     );
   }
 
+  /// Official server-side option labels arrive in English; the web client
+  /// maps them to localized text (Pct/Nct tables). Kind fallbacks mirror
+  /// jct, descriptions mirror Fct.
+  static const _optionLabelByServerText = {
+    'allow once': '允许一次',
+    'allow': '允许',
+    'always allow': '总是允许',
+    'deny': '拒绝',
+    'allow for session': '允许本会话',
+    'allow for this session': '允许本会话',
+    'always allow in this project': '始终允许本项目',
+    'always allow computer use in this project': '始终允许本项目中的电脑控制',
+  };
+
+  static const _optionDescriptionByKind = {
+    'allowOnce': '仅允许这一次',
+    'allowAlways': '后续相同权限请求不再询问',
+    'rejectOnce': '这次先拒绝',
+    'rejectAlways': '后续相同权限请求也会直接拒绝',
+  };
+
   String _optionLabel(Map option) {
-    final label = option['label'] as String?;
-    if (label != null && label.isNotEmpty) return label;
     final kind = option['kind'] as String?;
-    return switch (kind) {
+    final kindLabel = switch (kind) {
       'allowOnce' => '允许一次',
       'allowAlways' => '总是允许',
       'deny' => '拒绝',
       'custom' => '自定义',
-      _ => '${option['optionId'] ?? '选择'}',
+      _ => null,
     };
+    final label = option['label'] as String?;
+    if (label != null && label.isNotEmpty) {
+      final normalized =
+          label.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+      return _optionLabelByServerText[normalized] ?? label;
+    }
+    return kindLabel ?? '${option['optionId'] ?? '选择'}';
+  }
+
+  String _optionDescription(Map option) {
+    final own = option['description'] as String?;
+    if (own != null && own.isNotEmpty) return own;
+    final kind = option['kind'] as String?;
+    return _optionDescriptionByKind[kind] ?? '';
   }
 }
 
