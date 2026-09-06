@@ -75,6 +75,7 @@ class MentionMenuBar extends StatelessWidget {
   final void Function(MentionItem item) onSelect;
 
   const MentionMenuBar({
+    super.key,
     required this.query,
     required this.items,
     this.hidden = const {},
@@ -142,7 +143,8 @@ class MentionMenuBar extends StatelessWidget {
               ),
             ),
             // 官方每个类目默认只露出前几条，避免长列表淹没输入框。
-            for (final item in entry.value.take(entry.key == MentionCategory.files ? 6 : 4))
+            for (final item in entry.value
+                .take(entry.key == MentionCategory.files ? 6 : 4))
               ListTile(
                 dense: true,
                 leading: Icon(

@@ -1402,7 +1402,8 @@ class _ChatPageState extends State<ChatPage> {
       ];
 
   /// Dedicated skill picker so skills are one tap away (no `/` guessing).
-  void _openSkillsPicker() {    showModalBottomSheet<void>(
+  void _openSkillsPicker() {
+    showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
       builder: (context) => _SkillsPickerSheet(
@@ -1698,7 +1699,8 @@ class _ChatPageState extends State<ChatPage> {
                 MentionCategory.skills: _mentionSkills,
               },
               onSelect: _insertMention,
-            ),          if (_progress != null)
+            ),
+          if (_progress != null)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
               child: Row(
