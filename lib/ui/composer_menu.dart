@@ -1,5 +1,3 @@
-import 'dart:collection';
-
 import 'package:flutter/material.dart';
 
 import '../protocol/conversation.dart';
@@ -18,7 +16,7 @@ LinkedHashMap<String, List<ConfigOptionValue>> groupModelOptions(
     return idx <= 0 ? v.value : v.value.substring(0, idx);
   }
 
-  final groups = LinkedHashMap<String, List<ConfigOptionValue>>();
+  final groups = <String, List<ConfigOptionValue>>{};
   for (final v in options) {
     groups.putIfAbsent(keyOf(v), () => []).add(v);
   }
@@ -295,8 +293,12 @@ class _ComposerModelMenuBodyState extends State<ComposerModelMenuBody> {
   Widget build(BuildContext context) {
     final groups = groupModelOptions(widget.options);
     if (groups.length < 2 || groups.length >= widget.options.length) {
-      return _modelRows(groups.values.expand((m) => m).toList(),
-          withProviderTags: true);
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: _modelRows(groups.values.expand((m) => m).toList(),
+            withProviderTags: true),
+      );
     }
     final open = _openProvider;
     if (open != null && groups.containsKey(open)) {

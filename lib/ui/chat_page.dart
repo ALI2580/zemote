@@ -1098,7 +1098,7 @@ class _ChatPageState extends State<ChatPage> {
         (
           ComposerMenuEntry(
             icon: _modeIconOf(value) ?? Icons.tune,
-            title: _modeTitleOf(value, fallbackName: fallbackName),
+            title: _modeTitleOf(value, fallbackName),
             subtitle: _modeSubtitleOf(value, description),
             selected: value == _currentModeValue,
           ),
