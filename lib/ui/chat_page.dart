@@ -2045,9 +2045,6 @@ class _ExecutionTrace extends StatelessWidget {
         dense: true,
         shape: const Border(),
         collapsedShape: const Border(),
-        // ExpansionTile 默认把 children 水平居中（topCenter），思考行/
-        // 工具行必须与其他操作行一致靠左。
-        childrenAlignment: AlignmentDirectional.topStart,
         tilePadding: const EdgeInsets.symmetric(horizontal: 11),
         leading: Icon(
           _running
@@ -2066,14 +2063,19 @@ class _ExecutionTrace extends StatelessWidget {
         subtitle: Text('点击查看执行详情',
             style: TextStyle(fontSize: 10.5, color: ZInk.faint(context))),
         children: [
+          // ExpansionTile 内部的 Column 水平居中 children；拉满宽度让
+          // 思考行/工具行与其他操作行一致靠左。
           for (final row in rows)
-            _RowWidget(
-              row: row,
-              showFeedback: false,
-              transport: transport,
-              sessionId: sessionId,
-              onAction: onAction,
-              state: state,
+            SizedBox(
+              width: double.infinity,
+              child: _RowWidget(
+                row: row,
+                showFeedback: false,
+                transport: transport,
+                sessionId: sessionId,
+                onAction: onAction,
+                state: state,
+              ),
             ),
         ],
       ),
