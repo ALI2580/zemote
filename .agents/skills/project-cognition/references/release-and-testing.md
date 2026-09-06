@@ -80,6 +80,11 @@ setUp(() {
   `flutter test` → `flutter build web --release` 冒烟。
 - `build-apk.yml`：`v*` tag 或手动触发 → 签名构建 3 ABI + MD5 → 上传 Release。
   Action 版本用 commit SHA 固定（供应链安全习惯）。
+- **门禁盲区（0.5.5 踩过）**：ci.yml **不编译 Android**——"先推 main 等 CI 绿再打 tag"
+  的策略只覆盖 Dart 层。Kotlin/gradle 改动（新原生 API、依赖升级、compileSdk 调整）的
+  真正编译验证只在 build-apk.yml；首次接入原生 API 预期 1-2 次构建失败，修复流程见
+  lessons.md 的 Live Updates 节（framework 符号陷阱、androidx.core 版本甜点位、
+  AAR metadata 的 minCompileSdk 检查）。
 
 ## 签名要点（当前仓库 ALI2580/zemote，已配置完成）
 

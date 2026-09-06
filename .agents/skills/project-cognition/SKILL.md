@@ -76,6 +76,12 @@ Conversation V4 传输层（每 workspace 缓存一份）。
     更新（`userScrollDirection != ScrollDirection.idle`，程序 `animateTo` 期间恒为 idle），
     跟随只在吸底时执行。禁止重新引入"接近底部 N 像素即跟随"的距离启发式——流式输出时
     maxScrollExtent 持续增长，任何静态阈值都会把正在翻历史的用户往下拽（0.5.4 修过的坑）。
+12. **Android 原生 API 优先走 androidx compat**：framework 新符号可能在 stable SDK 里
+    不可用（Live Updates 的 `setColor`/`setRequestPromotedOngoing` 属 API 36.1
+    / @FlaggedApi，直接调用编译失败）。上岛通知统一用 `NotificationCompat`，依赖锁
+    `androidx.core:core:1.18.0`（1.19.x 传递的 core-ktx 要求 compileSdk 37，挂在
+    AAR metadata 检查）；`compileSdk` 固定 36。改 Kotlin/gradle 前先读
+    `references/lessons.md` 的 Live Updates 节。
 
 ## 代码约定
 
