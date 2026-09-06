@@ -46,10 +46,15 @@ class ZColors {
   static const danger = Color(0xFFEF4444);
   static const running = Color(0xFF38BDF8);
 
-  /// Full Access accent (light orange) — the unguarded mode gets a
-  /// deliberately louder color than the rest of the UI.
-  static const fullAccess = Color(0xFFFFB86B);
-  static const fullAccessDeep = Color(0xFFB45309);
+  /// Full Access accent, calibrated against the official web client:
+  /// dark #FF8A30, light #E07B00.
+  static const fullAccess = Color(0xFFFF8A30);
+  static const fullAccessDeep = Color(0xFFE07B00);
+
+  /// Composer container surface (official web parity):
+  /// dark #2B2B2B, light white — 16px radius, hairline border.
+  static const composerDark = Color(0xFF2B2B2B);
+  static const composerLight = Color(0xFFFFFFFF);
 
   static const lightBg = Color(0xFFF6F8FC);
   static const lightSurface = Color(0xFFFFFFFF);

@@ -9,6 +9,7 @@ import '../protocol/channel_client.dart';
 import '../protocol/conversation.dart';
 import '../protocol/zemote_client.dart';
 import '../state/log_store.dart';
+import 'composer_menu.dart';
 import 'diff_view.dart';
 import 'markdown_view.dart';
 import 'theme.dart';
@@ -128,6 +129,54 @@ class _PendingFile {
 
   _PendingFile(this.fileName, this.mime, this.bytes);
 }
+
+/// Official-web naming/presentation for the four collaboration modes
+/// (scraped from the desktop web remote control composer).
+const _modePresentation = <String, (IconData, String, String)>{
+  'build': (Icons.back_hand, '变更前确认', '改文件前先问我。'),
+  'edit': (Icons.edit_note, '自动编辑', '自动编辑文件。'),
+  'plan': (Icons.checklist, '计划模式', '编辑前先出计划。'),
+  'yolo': (Icons.gpp_maybe, '完全访问', '减少确认次数。'),
+};
+
+String _modeTitleOf(String value, String fallbackName) {
+  final hit = _modePresentation[value.trim().toLowerCase()];
+  return hit?.$2 ?? (fallbackName.isNotEmpty ? fallbackName : value);
+}
+
+String? _modeSubtitleOf(String value, String? desktopDescription) {
+  if (desktopDescription != null && desktopDescription.isNotEmpty) {
+    return desktopDescription;
+  }
+  return _modePresentation[value.trim().toLowerCase()]?.$3;
+}
+
+IconData? _modeIconOf(String value) =>
+    _modePresentation[value.trim().toLowerCase()]?.$1;
+
+String _thoughtTitleOf(String value, String fallbackName) {
+  switch (value.trim().toLowerCase()) {
+    case 'low':
+      return '低';
+    case 'high':
+      return '高';
+    case 'max':
+      return '最高';
+    case 'enabled':
+      return '开启';
+    case 'off':
+      return '关闭';
+    default:
+      return fallbackName.isNotEmpty ? fallbackName : value;
+  }
+}
+
+/// Full Access ink: deep orange on light theme, light orange on dark
+/// (official web: #E07B00 light / #FF8A30 dark).
+Color _fullAccessInkFor(BuildContext context) =>
+    Theme.of(context).brightness == Brightness.light
+        ? ZColors.fullAccessDeep
+        : ZColors.fullAccess;
 
 /// Composer drafts survive leaving the chat page: keyed by session id, or
 /// by workspace for not-yet-created sessions. Cleared implicitly when the
@@ -889,6 +938,277 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
+  // ------------------------------------------------- composer config chips
+
+  bool get _isDraftSession => _sessionId == null || _sessionId!.isEmpty;
+
+  ConfigOption? get _modelOption => _prep?.option('model');
+  ConfigOption? get _modeOption => _prep?.option('mode');
+  ConfigOption? get _thoughtOption => _prep?.option('thought_level');
+
+  /// Mirrors _ModelModeSheet's resolution: prefer the LIVE session config,
+  /// fall back to prepareWorkspace currentValue / draft.
+  String get _currentModelValue {
+    final config = _state?.config ?? const {};
+    final live = '${config['provider'] ?? ''}/${config['model'] ?? ''}';
+    return _isDraftSession ||
+            config['model'] == null ||
+            '${config['model']}'.isEmpty
+        ? (_draftConfig['model'] ?? '${_modelOption?.currentValue ?? ''}')
+        : live;
+  }
+
+  String get _currentModeValue {
+    if (_isDraftSession) return _draftConfig['mode'] ?? 'build';
+    return _state?.currentMode ?? 'build';
+  }
+
+  String get _currentThoughtValue {
+    if (_isDraftSession) {
+      return _draftConfig['thought'] ?? '${_thoughtOption?.currentValue ?? ''}';
+    }
+    return _state?.currentThought.isNotEmpty == true
+        ? _state!.currentThought
+        : '${_thoughtOption?.currentValue ?? ''}';
+  }
+
+  String get _currentModelLabel {
+    final v = _currentModelValue;
+    for (final o in _modelOption?.options ?? const <ConfigOptionValue>[]) {
+      if (o.value == v) return o.name;
+    }
+    final idx = v.lastIndexOf('/');
+    if (idx <= 0) return v.isEmpty ? '模型' : v;
+    return v.substring(idx + 1);
+  }
+
+  String get _currentModeLabel {
+    final option = _modeOption;
+    for (final o in option?.options ?? const <ConfigOptionValue>[]) {
+      if (o.value == _currentModeValue) {
+        return _modeTitleOf(o.value, o.name);
+      }
+    }
+    return _modeTitleOf(_currentModeValue, '');
+  }
+
+  String get _currentThoughtLabel {
+    final v = _currentThoughtValue;
+    for (final o in _thoughtOption?.options ?? const <ConfigOptionValue>[]) {
+      if (o.value == v) return _thoughtTitleOf(o.value, o.name);
+    }
+    return v.isEmpty ? '思考' : _thoughtTitleOf(v, v);
+  }
+
+  /// Shared apply path for the inline composer dropdowns (no sheet to pop).
+  Future<bool> _applyConfig(Future<dynamic> Function() run,
+      {void Function()? onAccepted}) async {
+    try {
+      final res = await run();
+      if (res is Map && res['status'] != null && res['status'] != 'accepted') {
+        _toast('被拒绝: ${res['reasonCode'] ?? res['status']}');
+        return false;
+      }
+      onAccepted?.call();
+      return true;
+    } catch (e) {
+      _toast('失败: $e');
+      return false;
+    }
+  }
+
+  void _switchMode(String value) {
+    if (_isDraftSession) {
+      setState(() => _draftConfig['mode'] = value);
+      return;
+    }
+    _applyConfig(
+      () => _transport.switchCollaborationMode(_sessionId ?? '', value),
+      onAccepted: () => _state?.optimisticPatch({
+        'config': {...?_state!.config, 'mode': value},
+      }),
+    );
+  }
+
+  void _switchThought(String value) {
+    if (_isDraftSession) {
+      setState(() => _draftConfig['thought'] = value);
+      return;
+    }
+    final modelValue = _currentModelValue;
+    final idx = modelValue.lastIndexOf('/');
+    final (provider, model) = idx <= 0
+        ? (modelValue, modelValue)
+        : (
+            modelValue.substring(0, idx),
+            modelValue.substring(idx + 1),
+          );
+    _applyConfig(
+      () => _transport.switchModelConfig(
+        _sessionId ?? '',
+        provider: provider,
+        model: model,
+        thought: value,
+      ),
+      onAccepted: () => _state?.optimisticPatch({
+        'config': {...?_state!.config, 'thought': value},
+      }),
+    );
+  }
+
+  void _selectModel(ConfigOptionValue v) {
+    if (_isDraftSession) {
+      setState(() => _draftConfig['model'] = v.value);
+      return;
+    }
+    final idx = v.value.lastIndexOf('/');
+    final (provider, model) = idx <= 0
+        ? (v.value, v.value)
+        : (v.value.substring(0, idx), v.value.substring(idx + 1));
+    // thought must be valid for the target model: keep current if supported,
+    // else fall back to the thought option's currentValue.
+    final currentThought = _state?.currentThought ?? '';
+    final thoughtOpt = _thoughtOption;
+    final thought = currentThought.isNotEmpty &&
+            (thoughtOpt?.options.any((o) => o.value == currentThought) ??
+                false)
+        ? currentThought
+        : '${thoughtOpt?.currentValue ?? (currentThought.isNotEmpty ? currentThought : 'enabled')}';
+    _applyConfig(
+      () => _transport.switchModelConfig(
+        _sessionId ?? '',
+        provider: provider,
+        model: model,
+        thought: thought,
+      ),
+      onAccepted: () => _state?.optimisticPatch({
+        'config': {
+          ...?_state!.config,
+          'provider': provider,
+          'model': model,
+          'thought': thought,
+        },
+      }),
+    );
+  }
+
+  List<(ComposerMenuEntry, String)> _modeMenuEntries() {
+    (ComposerMenuEntry, String) build(String value, String fallbackName,
+            String? description) =>
+        (
+          ComposerMenuEntry(
+            icon: _modeIconOf(value) ?? Icons.tune,
+            title: _modeTitleOf(value, fallbackName: fallbackName),
+            subtitle: _modeSubtitleOf(value, description),
+            selected: value == _currentModeValue,
+          ),
+          value,
+        );
+    final option = _modeOption;
+    if (option != null && option.options.isNotEmpty) {
+      return [
+        for (final v in option.options) build(v.value, v.name, v.description),
+      ];
+    }
+    return [
+      for (final m in const ['build', 'edit', 'plan', 'yolo']) build(m, m, null),
+    ];
+  }
+
+  List<(ComposerMenuEntry, String)> _thoughtMenuEntries() {
+    final option = _thoughtOption;
+    if (option != null && option.options.isNotEmpty) {
+      return [
+        for (final v in option.options)
+          (
+            ComposerMenuEntry(
+              title: _thoughtTitleOf(v.value, v.name),
+              selected: v.value == _currentThoughtValue,
+            ),
+            v.value,
+          ),
+      ];
+    }
+    final levels = _state?.thoughtLevels ?? const <String>[];
+    return [
+      for (final l in levels)
+        (
+          ComposerMenuEntry(title: _thoughtTitleOf(l, l), selected: l == _currentThoughtValue),
+          l,
+        ),
+    ];
+  }
+
+  Widget _buildModeChip() {
+    final isFull = _currentModeValue == 'yolo' ||
+        _currentModeValue.toLowerCase() == 'fullaccess';
+    return ComposerChip(
+      icon: isFull ? Icons.gpp_maybe : Icons.shield_outlined,
+      label: _currentModeLabel,
+      labelColor: isFull ? _fullAccessInkFor(context) : null,
+      tooltip: '协作模式',
+      menuBuilder: (context, close) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final (e, value) in _modeMenuEntries())
+            ComposerMenuRow(
+              entry: e,
+              onTap: () {
+                close();
+                _switchMode(value);
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildModelChip() {
+    final option = _modelOption;
+    final available = option != null && option.options.isNotEmpty;
+    return ComposerChip(
+      icon: Icons.radio_button_checked_outlined,
+      label: available || _currentModelLabel.isNotEmpty
+          ? _currentModelLabel
+          : '模型',
+      enabled: available,
+      tooltip: '模型',
+      menuBuilder: (context, close) => ComposerModelMenuBody(
+        options: option!.options,
+        currentModelValue: _currentModelValue,
+        onSelect: (v) {
+          close();
+          _selectModel(v);
+        },
+      ),
+    );
+  }
+
+  Widget _buildThoughtChip() {
+    final entries = _thoughtMenuEntries();
+    return ComposerChip(
+      icon: Icons.psychology_outlined,
+      label: _currentThoughtLabel,
+      enabled: entries.isNotEmpty,
+      tooltip: '思考强度',
+      menuBuilder: (context, close) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final (e, value) in entries)
+            ComposerMenuRow(
+              entry: e,
+              onTap: () {
+                close();
+                _switchThought(value);
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
   // ------------------------------------------------------------ sheets
 
   void _showModelSheet() {
@@ -1250,6 +1570,10 @@ class _ChatPageState extends State<ChatPage> {
             onAttach: _pickFiles,
             onSkills: _openSkillsPicker,
             onVoice: _toggleVoiceInput,
+            modeChip: _buildModeChip(),
+            modelChip: _buildModelChip(),
+            thoughtChip: _buildThoughtChip(),
+            onMoreSettings: _showModelSheet,
           ),
         ],
       ),
@@ -4629,6 +4953,13 @@ class _InputBar extends StatefulWidget {
   final VoidCallback onSkills;
   final VoidCallback onVoice;
 
+  /// Inline config dropdowns built by [_ChatPageState] (official-web style:
+  /// mode / model / thought live INSIDE the composer toolbar).
+  final Widget modeChip;
+  final Widget modelChip;
+  final Widget thoughtChip;
+  final VoidCallback? onMoreSettings;
+
   const _InputBar({
     required this.controller,
     required this.sending,
@@ -4639,6 +4970,10 @@ class _InputBar extends StatefulWidget {
     required this.onAttach,
     required this.onSkills,
     required this.onVoice,
+    required this.modeChip,
+    required this.modelChip,
+    required this.thoughtChip,
+    this.onMoreSettings,
   });
 
   @override
@@ -4648,71 +4983,114 @@ class _InputBar extends StatefulWidget {
 class _InputBarState extends State<_InputBar> {
   @override
   Widget build(BuildContext context) {
+    final isLight = Theme.of(context).brightness == Brightness.light;
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(14, 6, 14, 12),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            IconButton(
-              icon: Icon(Icons.add_circle_outline,
-                  size: 23, color: ZInk.muted(context)),
-              tooltip: '更多操作',
-              onPressed: widget.sending ? null : () => _showActions(context),
-            ),
-            Expanded(
-              child: TextField(
-                controller: widget.controller,
-                minLines: 1,
-                maxLines: 5,
-                style: const TextStyle(fontSize: 14),
-                decoration: const InputDecoration(
-                  hintText: '向 ZCode 发送消息…',
-                ),
-                textInputAction: TextInputAction.newline,
-              ),
-            ),
-            const SizedBox(width: 10),
-            if (widget.voiceAvailable)
-              IconButton(
-                icon: widget.voiceWorking
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : Icon(
-                        widget.voiceRecording ? Icons.stop_circle : Icons.mic,
-                        size: 22,
-                        color: widget.voiceRecording
-                            ? ZColors.danger
-                            : ZInk.muted(context),
+        child: Container(
+          // Official web composer parity: 16px radius container with a
+          // hairline border; dark #2B2B2B / light white surface.
+          decoration: BoxDecoration(
+            color:
+                isLight ? ZColors.composerLight : ZColors.composerDark,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: ZInk.hairline(context)),
+          ),
+          padding: const EdgeInsets.fromLTRB(4, 2, 8, 4),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: widget.controller,
+                      minLines: 1,
+                      maxLines: 5,
+                      style: const TextStyle(fontSize: 14),
+                      decoration: const InputDecoration(
+                        hintText: '向 ZCode 发送消息…',
+                        border: InputBorder.none,
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 12),
                       ),
-                tooltip: widget.voiceRecording ? '停止录音' : '语音输入',
-                onPressed: widget.sending || widget.voiceWorking
-                    ? null
-                    : widget.onVoice,
+                      textInputAction: TextInputAction.newline,
+                    ),
+                  ),
+                  if (widget.voiceAvailable)
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      icon: widget.voiceWorking
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2),
+                            )
+                          : Icon(
+                              widget.voiceRecording
+                                  ? Icons.stop_circle
+                                  : Icons.mic,
+                              size: 20,
+                              color: widget.voiceRecording
+                                  ? ZColors.danger
+                                  : ZInk.muted(context),
+                            ),
+                      tooltip: widget.voiceRecording ? '停止录音' : '语音输入',
+                      onPressed: widget.sending || widget.voiceWorking
+                          ? null
+                          : widget.onVoice,
+                    ),
+                ],
               ),
-            const SizedBox(width: 4),
-            Container(
-              decoration: const BoxDecoration(
-                color: ZColors.primary,
-                shape: BoxShape.circle,
+              Row(
+                children: [
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    icon: Icon(Icons.add,
+                        size: 20, color: ZInk.muted(context)),
+                    tooltip: '更多操作',
+                    onPressed:
+                        widget.sending ? null : () => _showActions(context),
+                  ),
+                  const SizedBox(width: 2),
+                  widget.modeChip,
+                  const Spacer(),
+                  widget.modelChip,
+                  const SizedBox(width: 6),
+                  widget.thoughtChip,
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    icon: Icon(Icons.tune,
+                        size: 18, color: ZInk.muted(context)),
+                    tooltip: '更多设置',
+                    onPressed: widget.onMoreSettings,
+                  ),
+                  const SizedBox(width: 2),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: ZColors.primary,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: IconButton(
+                      visualDensity: VisualDensity.compact,
+                      onPressed: widget.sending ? null : widget.onSend,
+                      icon: widget.sending
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: Colors.white),
+                            )
+                          : const Icon(Icons.arrow_upward,
+                              color: Colors.white, size: 19),
+                    ),
+                  ),
+                ],
               ),
-              child: IconButton(
-                onPressed: widget.sending ? null : widget.onSend,
-                icon: widget.sending
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white),
-                      )
-                    : const Icon(Icons.arrow_upward,
-                        color: Colors.white, size: 20),
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

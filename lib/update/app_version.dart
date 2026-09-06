@@ -3,5 +3,5 @@
 /// Used for update checks against the GitHub latest release. Hardcoded
 /// instead of `package_info_plus` because adding a native plugin currently
 /// requires Windows Developer Mode (symlink support).
-const appVersion = '0.5.5';
-const appBuildNumber = 17;
+const appVersion = '0.5.6';
+const appBuildNumber = 18;
