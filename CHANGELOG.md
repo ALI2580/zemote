@@ -2,7 +2,7 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [0.6.7] - 2026-09-07
 
 ### Fixed
 - **状态胶囊真正可收起**：上一版的「整行收起」仍无效——展开面板的赋值无条件覆盖了胶囊分支（`if (!_expanded)` 构建的胶囊被随后的面板构建直接丢弃），点击收起后永远还是面板。改为胶囊分支提前返回，胶囊↔面板两态稳定切换；面板右上角按钮由关闭 X 换为官方「收起为胶囊」语义的 chevron-up（放大/缩小）。
