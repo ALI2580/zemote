@@ -168,19 +168,21 @@ class _ComposerChipState extends State<ComposerChip> {
   @override
   Widget build(BuildContext context) {
     final chipColor = widget.labelColor ?? ZInk.soft(context);
-    final showBar = widget.barFill != null && !widget.iconOnly;
+    final showBar = widget.barFill != null;
+    // 官方 <384px 触发器：size-7(28px) 方形、居中、gap-0、p-0（有竖条时
+    // 保持流式布局，方形会截断竖条）。
+    final square = widget.iconOnly && widget.barFill == null;
     final chip = Container(
       decoration: BoxDecoration(
         color: _open ? ZInk.tile(context) : Colors.transparent,
         borderRadius: BorderRadius.circular(8),
       ),
-      // 官方 <384px 触发器：size-7(28px) 方形、居中、gap-0、p-0。
-      padding: widget.iconOnly
+      padding: square
           ? EdgeInsets.zero
           : const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      height: widget.iconOnly ? 28 : null,
-      width: widget.iconOnly ? 28 : null,
-      alignment: widget.iconOnly ? Alignment.center : null,
+      height: square ? 28 : null,
+      width: square ? 28 : null,
+      alignment: square ? Alignment.center : null,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [

@@ -263,7 +263,9 @@ Path _parsePath(String d) {
         sx = cx;
         sy = cy;
         path.moveTo(cx, cy);
-        cmd = 'L';
+        // 小写 m 之后的隐式线段是相对的（官方 arrow-up/chevron 均以此
+        // 起笔，误当绝对坐标会画出飞出画布的"竖线"）。
+        cmd = cmd == 'm' ? 'l' : 'L';
       case 'L' || 'l':
         while (nextIsNumber()) {
           if (cmd == 'L') {

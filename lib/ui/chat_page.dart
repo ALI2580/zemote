@@ -374,6 +374,15 @@ double thoughtBarFill(List<String> optionValues, String current) {
   return filled.clamp(0.0, 1.0);
 }
 
+/// 顶部会话状态中文标签（协议 phase 枚举 → 中文，与任务列表文案一致）。
+String phaseLabel(String phase) => switch (phase) {
+  'running' || 'prewarming' => '运行中',
+  'completed' || 'completedSuccess' => '已完成',
+  'completedInterrupted' || 'cancelled' => '已停止',
+  'failed' || 'error' => '失败',
+  _ => phase,
+};
+
 /// Official turn work-status label (chat.history.*): running = 工作中
 /// {duration}, interrupted/failed = 已停止, completed = 已工作 {duration}
 /// (or 已处理 when no duration was reported).
@@ -1297,45 +1306,55 @@ class _ChatPageState extends State<ChatPage> {
     if (state == null || sessionId == null || _loadingOlder) return;
     setState(() => _loadingOlder = true);
     try {
-      final res = await _transport.rowsRange(
-        sessionId,
-        beforeRowId: state.oldestRowId,
-        limit: 60,
-      );
-      List? rows;
-      int? firstRowId;
-      bool? hasMore;
-      if (res is Map) {
-        final rowsObj = res['rows'];
-        if (rowsObj is Map) {
-          rows = rowsObj['window'] as List? ?? rowsObj['rows'] as List?;
-          firstRowId = (rowsObj['firstRowId'] as num?)?.toInt();
-          hasMore = rowsObj['hasMore'] as bool?;
-        } else if (rowsObj is List) {
-          rows = rowsObj;
+      // 官方 loadAllOlder 语义：循环按页拉取直到 hasMore=false（官方
+      // 会话展示的历史比单页多）。页大小取 50——官方 schema 对 limit 有
+      // max 上限（rowsRangeMaxLimit），一次一页循环补齐。
+      for (var page = 0; page < 40; page++) {
+        final currentState = _state;
+        if (currentState == null || !currentState.canLoadOlder) break;
+        final res = await _transport.rowsRange(
+          sessionId,
+          beforeRowId: currentState.oldestRowId,
+          limit: 50,
+        );
+        List? rows;
+        int? firstRowId;
+        bool? hasMore;
+        if (res is Map) {
+          final rowsObj = res['rows'];
+          if (rowsObj is Map) {
+            rows = rowsObj['window'] as List? ?? rowsObj['rows'] as List?;
+            firstRowId = (rowsObj['firstRowId'] as num?)?.toInt();
+            hasMore = rowsObj['hasMore'] as bool?;
+          } else if (rowsObj is List) {
+            rows = rowsObj;
+          }
+          rows ??= res['items'] as List? ?? res['window'] as List?;
+          firstRowId ??= (res['firstRowId'] as num?)?.toInt();
+          hasMore ??= res['hasMore'] as bool?;
+        } else if (res is List) {
+          rows = res;
         }
-        rows ??= res['items'] as List? ?? res['window'] as List?;
-        firstRowId ??= (res['firstRowId'] as num?)?.toInt();
-        hasMore ??= res['hasMore'] as bool?;
-      } else if (res is List) {
-        rows = res;
-      }
-      if (rows != null && rows.isNotEmpty) {
         final older = rows
-            .whereType<Map>()
+            ?.whereType<Map>()
             .map((e) => e.cast<String, dynamic>())
             .toList()
-          ..sort((a, b) =>
+          ?..sort((a, b) =>
               ((a['rowId'] as num?) ?? 0).compareTo((b['rowId'] as num?) ?? 0));
-        state.prependOlderRows(older, firstRowId);
-        if (hasMore == false) state.historyExhausted = true;
-        // Prepending shifts the content above; keep the newest message in
-        // view when the user is pinned to the bottom.
-        if (_stickToBottom) _scrollToBottom();
-      } else if (state.rows.isNotEmpty) {
-        if (hasMore == false) state.historyExhausted = true;
-        _toast('没有更早的消息了');
+        if (older == null || older.isEmpty) {
+          if (hasMore == false) currentState.historyExhausted = true;
+          break;
+        }
+        final before = currentState.rows.length;
+        currentState.prependOlderRows(older, firstRowId);
+        if (hasMore == false) {
+          currentState.historyExhausted = true;
+          break;
+        }
+        // 一页没有任何新增（游标不再前进）就停，避免死循环。
+        if (currentState.rows.length == before) break;
       }
+      if (_stickToBottom) _scrollToBottom();
     } catch (e) {
       _toast('加载失败: $e');
     } finally {
@@ -1675,9 +1694,7 @@ class _ChatPageState extends State<ChatPage> {
       label: _currentThoughtLabel,
       enabled: entries.isNotEmpty,
       iconOnly: iconOnly,
-      barFill: !iconOnly &&
-              composerWidth < _composerXl &&
-              values.isNotEmpty
+      barFill: composerWidth < _composerXl && values.isNotEmpty
           ? thoughtBarFill(values, _currentThoughtValue)
           : null,
       tooltip: composerWidth >= _composerXl
@@ -1855,7 +1872,7 @@ class _ChatPageState extends State<ChatPage> {
                 animation: state,
                 builder: (context, _) => Text(
                   [
-                    if (state.phase.isNotEmpty) state.phase,
+                    if (state.phase.isNotEmpty) phaseLabel(state.phase),
                     state.currentModel,
                     if (state.currentThought.isNotEmpty) state.currentThought,
                   ].where((s) => s.isNotEmpty).join(' · '),
@@ -2033,6 +2050,13 @@ class _ChatPageState extends State<ChatPage> {
                 if (!widget.isSideChat && state != null)
                   Positioned(
                     top: 8,
+                    left: 24,
+                    right: 24,
+                    child: _ReconnectBanner(bridge: _transport.session),
+                  ),
+                if (!widget.isSideChat && state != null)
+                  Positioned(
+                    top: 8,
                     right: 12,
                     child: AnimatedBuilder(
                       animation: state,
@@ -2048,7 +2072,6 @@ class _ChatPageState extends State<ChatPage> {
               ],
             ),
           ),
-          _ReconnectBanner(bridge: _transport.session),
           if (state != null)
             AnimatedBuilder(
               animation: state,
@@ -2056,8 +2079,8 @@ class _ChatPageState extends State<ChatPage> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   if (!widget.isSideChat) _GoalBanner(state: state),
-                  _ActiveExecutionBar(state: state),
-                  _QueueBar(state: state, transport: _transport),
+                  if (!widget.isSideChat) _ActiveExecutionBar(state: state),
+                  if (!widget.isSideChat) _QueueBar(state: state, transport: _transport),
                   _PendingInteractions(state: state, transport: _transport),
                 ],
               ),
@@ -2125,10 +2148,18 @@ class _ChatPageState extends State<ChatPage> {
             onAttach: _pickFiles,
             onSkills: _openSkillsPicker,
             onVoice: _toggleVoiceInput,
+            onCompact: _sessionId == null
+                ? null
+                : () => _run('压缩失败', () => _transport.compact(_sessionId!)),
+            onUsage: _sessionId == null ? null : _showUsageSheet,
+            onPlans: _showPlansSheet,
             modeChip: _buildModeChip,
             modelChip: _buildModelChip,
             thoughtChip: _buildThoughtChip,
-            usageRing: _buildUsageRing(),
+            // 辅助对话净化：用量环复用主会话数据，辅助会话不显示。
+            usageRing: widget.isSideChat
+                ? const SizedBox.shrink()
+                : _buildUsageRing(),
           ),
         ],
       ),
@@ -2375,18 +2406,16 @@ class _TurnGroupWidget extends StatelessWidget {
           sideChat: sideChat,
         ));
       } else if (_isExecutionRow(p.row!)) {
-        final executionRows = <Map<String, dynamic>>[p.row!];
-        while (i + 1 < parts.parts.length &&
-            parts.parts[i + 1].kind == 'row' &&
-            _isExecutionRow(parts.parts[i + 1].row!)) {
-          executionRows.add(parts.parts[++i].row!);
-        }
-        children.add(_ExecutionTrace(
-          rows: executionRows,
+        // 官方运行中为平铺（He 官方截图对照）：思考/工具/子代理各占一行，
+        // 不再做「N 个工具」折叠分组；完成后的收起由 turn 折叠承担。
+        children.add(_RowWidget(
+          row: p.row!,
+          showFeedback: false,
           transport: transport,
           sessionId: sessionId,
           onAction: onAction,
           state: state,
+          sideChat: sideChat,
         ));
       } else {
         children.add(_RowWidget(
@@ -2475,84 +2504,6 @@ String compactExecutionLabel(List<Map<String, dynamic>> rows) {
     if (subagents > 0) '$subagents 个子代理',
   ];
   return parts.isEmpty ? '执行过程' : parts.join(' · ');
-}
-
-class _ExecutionTrace extends StatelessWidget {
-  final List<Map<String, dynamic>> rows;
-  final ConversationTransport transport;
-  final String sessionId;
-  final Future<void> Function(String, Future<dynamic> Function()) onAction;
-  final ConversationState state;
-
-  const _ExecutionTrace({
-    required this.rows,
-    required this.transport,
-    required this.sessionId,
-    required this.onAction,
-    required this.state,
-  });
-
-  bool get _running => rows
-      .any((row) => row['status'] == 'running' || row['state'] == 'streaming');
-
-  bool get _failed =>
-      rows.any((row) => row['status'] == 'error' || row['status'] == 'failed');
-
-  @override
-  Widget build(BuildContext context) {
-    final color = _running
-        ? ZColors.running
-        : _failed
-            ? ZColors.danger
-            : ZInk.muted(context);
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 3),
-      decoration: BoxDecoration(
-        color: ZInk.panel(context),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: ZInk.panelBorder(context)),
-      ),
-      child: ExpansionTile(
-        initiallyExpanded: _running,
-        dense: true,
-        shape: const Border(),
-        collapsedShape: const Border(),
-        tilePadding: const EdgeInsets.symmetric(horizontal: 11),
-        leading: Icon(
-          _running
-              ? Icons.sync
-              : _failed
-                  ? Icons.error_outline
-                  : Icons.account_tree_outlined,
-          size: 16,
-          color: color,
-        ),
-        title: Text(compactExecutionLabel(rows),
-            style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: ZInk.solid(context))),
-        subtitle: Text('点击查看执行详情',
-            style: TextStyle(fontSize: 10.5, color: ZInk.faint(context))),
-        children: [
-          // ExpansionTile 内部的 Column 水平居中 children；拉满宽度让
-          // 思考行/工具行与其他操作行一致靠左。
-          for (final row in rows)
-            SizedBox(
-              width: double.infinity,
-              child: _RowWidget(
-                row: row,
-                showFeedback: false,
-                transport: transport,
-                sessionId: sessionId,
-                onAction: onAction,
-                state: state,
-              ),
-            ),
-        ],
-      ),
-    );
-  }
 }
 
 class _ActiveExecutionBar extends StatelessWidget {
@@ -3376,19 +3327,14 @@ class _ReasoningTileState extends State<_ReasoningTile> {
   @override
   void initState() {
     super.initState();
-    _expanded = widget.streaming;
+    // 官方思考行在运行中也保持一行折叠态（He 官方截图对照）：
+    // 「思考 · 持续了 N 秒」，内容点开才显示，不随流式自动展开。
     _chevronVisible = widget.streaming;
   }
 
   @override
   void didUpdateWidget(_ReasoningTile oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.streaming && !oldWidget.streaming) {
-      setState(() {
-        _expanded = true;
-        _chevronVisible = true;
-      });
-    }
     if (!widget.streaming && oldWidget.streaming) {
       _scheduleChevronFade();
     }
@@ -4741,7 +4687,14 @@ class _StatusSummaryOverlayState extends State<_StatusSummaryOverlay> {
                   IconButton(
                     tooltip: '收起为胶囊',
                     visualDensity: VisualDensity.compact,
-                    onPressed: () => setState(() => _expanded = false),
+                    onPressed: () {
+                      // 收起后胶囊会出现在指尖下方（AnimatedSwitcher 旧面板
+                      // 淡出期间仍在原位），延迟切态避免同一手势的抬指落在
+                      // 胶囊上又立刻触发展开。
+                      Future.delayed(const Duration(milliseconds: 260), () {
+                        if (mounted) setState(() => _expanded = false);
+                      });
+                    },
                     icon: Icon(Icons.unfold_less,
                         size: 18, color: ZInk.muted(context)),
                   ),
@@ -6222,6 +6175,9 @@ class _InputBar extends StatefulWidget {
   final VoidCallback onAttach;
   final VoidCallback onSkills;
   final VoidCallback onVoice;
+  final VoidCallback? onCompact;
+  final VoidCallback? onUsage;
+  final VoidCallback? onPlans;
 
   /// Inline config dropdowns built by [_ChatPageState] (official-web style:
   /// mode / model / thought live INSIDE the composer toolbar). The usage
@@ -6245,6 +6201,9 @@ class _InputBar extends StatefulWidget {
     required this.onAttach,
     required this.onSkills,
     required this.onVoice,
+    this.onCompact,
+    this.onUsage,
+    this.onPlans,
     required this.modeChip,
     required this.modelChip,
     required this.thoughtChip,
@@ -6397,6 +6356,43 @@ class _InputBarState extends State<_InputBar> {
                   ),
                 ],
               ),
+              if (widget.onCompact != null ||
+                  widget.onUsage != null ||
+                  widget.onPlans != null) ...[
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    if (widget.onCompact != null)
+                      _ActionItem(
+                        icon: Icons.compress,
+                        label: '压缩上下文',
+                        onTap: () {
+                          Navigator.pop(context);
+                          widget.onCompact!();
+                        },
+                      ),
+                    if (widget.onUsage != null)
+                      _ActionItem(
+                        icon: Icons.data_usage,
+                        label: '用量统计',
+                        onTap: () {
+                          Navigator.pop(context);
+                          widget.onUsage!();
+                        },
+                      ),
+                    if (widget.onPlans != null)
+                      _ActionItem(
+                        icon: Icons.account_tree_outlined,
+                        label: '计划明细',
+                        onTap: () {
+                          Navigator.pop(context);
+                          widget.onPlans!();
+                        },
+                      ),
+                  ],
+                ),
+              ],
             ],
           ),
         ),
