@@ -102,6 +102,116 @@ List<PlanStep>? _parsePlanValue(Object? value) {
   return steps.isEmpty ? null : steps;
 }
 
+/// Context-window usage of one session, parsed from the conversation
+/// snapshot's `usage.contextWindow`:
+/// `{usedTokens, maxTokens, cache?: {hitRate}, breakdown?: [{source, chars}]}`.
+class ContextWindowInfo {
+  final int usedTokens;
+  final int maxTokens;
+
+  /// Average cache hit rate (0..1), when the desktop reports it.
+  final double? cacheHitRate;
+
+  /// Per-source context composition in characters, official sources:
+  /// messages / system_prompt / tool_prompt / system_tool_schemas /
+  /// mcp_tool_schemas / skills / meta_user_context.
+  final List<({String source, int chars})> breakdown;
+
+  const ContextWindowInfo({
+    required this.usedTokens,
+    required this.maxTokens,
+    this.cacheHitRate,
+    this.breakdown = const [],
+  });
+
+  double get ratio =>
+      maxTokens > 0 ? (usedTokens / maxTokens).clamp(0.0, 1.0) : 0.0;
+}
+
+/// Official breakdown source → label (chat.contextUsage.breakdown.*).
+const _contextSourceLabels = {
+  'messages': '消息',
+  'system_prompt': '系统提示词',
+  'tool_prompt': '工具提示词',
+  'system_tool_schemas': '系统工具',
+  'mcp_tool_schemas': 'MCP 工具',
+  'skills': '技能',
+  'meta_user_context': '其他',
+};
+
+/// Official tie-break order when two sources have equal chars.
+const _contextSourceOrder = {
+  'messages': 0,
+  'system_prompt': 1,
+  'meta_user_context': 2,
+  'skills': 3,
+  'tool_prompt': 4,
+  'system_tool_schemas': 5,
+  'mcp_tool_schemas': 6,
+};
+
+/// Lenient parse: desktops without cache/breakdown fields still yield the
+/// basic used/max ring; unknown shapes yield null (ring hidden).
+ContextWindowInfo? parseContextWindowInfo(Object? usage) {
+  if (usage is! Map) return null;
+  final window = usage['contextWindow'];
+  if (window is! Map) return null;
+  final used = (window['usedTokens'] as num?)?.toInt();
+  final max = (window['maxTokens'] as num?)?.toInt();
+  if (used == null || max == null || max <= 0) return null;
+  double? hitRate;
+  final cache = window['cache'];
+  if (cache is Map && cache['hitRate'] is num) {
+    hitRate = (cache['hitRate'] as num).toDouble().clamp(0.0, 1.0);
+  }
+  final bySource = <String, int>{};
+  final breakdown = window['breakdown'];
+  if (breakdown is List) {
+    for (final entry in breakdown) {
+      if (entry is! Map) continue;
+      final source = '${entry['source'] ?? ''}';
+      final chars = (entry['chars'] as num?)?.toInt() ?? 0;
+      if (source.isEmpty || chars <= 0) continue;
+      bySource[source] = (bySource[source] ?? 0) + chars;
+    }
+  }
+  final rows = bySource.entries
+      .map((e) => (source: e.key, chars: e.value))
+      .toList()
+    ..sort((a, b) {
+      final byChars = b.chars.compareTo(a.chars);
+      if (byChars != 0) return byChars;
+      return (_contextSourceOrder[a.source] ?? 99)
+          .compareTo(_contextSourceOrder[b.source] ?? 99);
+    });
+  return ContextWindowInfo(
+    usedTokens: used,
+    maxTokens: max,
+    cacheHitRate: hitRate,
+    breakdown: rows,
+  );
+}
+
+/// zh-style compact token count (official uses Intl compact notation):
+/// 1.2万 / 3亿 / 980.
+String formatCompactTokens(int v) {
+  if (v >= 100000000) {
+    final y = v / 100000000;
+    return '${y % 1 == 0 ? y.toStringAsFixed(0) : y.toStringAsFixed(1)}亿';
+  }
+  if (v >= 10000) {
+    final w = v / 10000;
+    return '${w % 1 == 0 ? w.toStringAsFixed(0) : w.toStringAsFixed(1)}万';
+  }
+  return '$v';
+}
+
+/// Official percent formatting: no decimals once >=10%, one decimal below.
+String formatUsagePercent(double ratio) {
+  final p = (ratio * 100).clamp(0.0, 100.0);
+  return p >= 10 ? '${p.toStringAsFixed(0)}%' : '${p.toStringAsFixed(1)}%';
+}
+
 /// Chat view for one task (session), backed by Conversation V4 subscription.
 /// Draft mode (no [sessionId]): the first message issues `createSession`.
 class ChatPage extends StatefulWidget {
@@ -125,6 +235,9 @@ class ChatPage extends StatefulWidget {
   /// imply a back arrow that would pop the host shell.
   final bool automaticallyImplyLeading;
 
+  /// Pretty workspace name for the draft (empty) state description.
+  final String? workspaceName;
+
   const ChatPage({
     super.key,
     required this.session,
@@ -135,6 +248,7 @@ class ChatPage extends StatefulWidget {
     this.isSideChat = false,
     this.onSessionCreated,
     this.automaticallyImplyLeading = true,
+    this.workspaceName,
   });
 
   @override
@@ -197,6 +311,131 @@ Color _fullAccessInkFor(BuildContext context) =>
         ? ZColors.fullAccessDeep
         : ZColors.fullAccess;
 
+/// Composer container-query breakpoints (official Tailwind v4 tiers, in
+/// logical px): below @sm everything is icon-only; the thought chip shows
+/// its green level bar between @sm and @xl; text labels return at @xl.
+const double _composerSm = 384;
+const double _composerXl = 576;
+
+/// Official thought-level intensity rank (`HZe`): off-family 0 → max 6.
+/// Unknown values sort last (99).
+int thoughtLevelRank(String raw) {
+  final v = raw.trim().toLowerCase();
+  const ranks = {
+    'disabled': 0,
+    'false': 0,
+    'no': 0,
+    'none': 0,
+    'nothink': 0,
+    'no-think': 0,
+    'no_think': 0,
+    'off': 0,
+    'low': 1,
+    'light': 1,
+    'minimal': 1,
+    'shallow': 1,
+    'balanced': 2,
+    'default': 2,
+    'medium': 2,
+    'normal': 2,
+    'standard': 2,
+    'deep': 3,
+    'high': 3,
+    'enable': 4,
+    'enabled': 4,
+    'on': 4,
+    'true': 4,
+    'extra-high': 5,
+    'extra_high': 5,
+    'very-high': 5,
+    'very_high': 5,
+    'xhigh': 5,
+    'max': 6,
+    'maximum': 6,
+  };
+  return ranks[v] ?? 99;
+}
+
+/// Fill fraction (0..1) of the official thought-level vertical bar: the
+/// current level's position among the ENABLED options, after sorting by
+/// rank (off options contribute zero). Mirrors the official `F` formula.
+double thoughtBarFill(List<String> optionValues, String current) {
+  if (optionValues.isEmpty) return 0;
+  final ranked = [...optionValues]
+    ..sort((a, b) => thoughtLevelRank(a).compareTo(thoughtLevelRank(b)));
+  final idx = ranked.indexOf(current);
+  if (idx < 0) return 0;
+  final offCount = ranked.where((e) => thoughtLevelRank(e) == 0).length;
+  final enabled = (ranked.length - offCount).clamp(1, ranked.length);
+  final filled = (idx + 1 - offCount) / enabled;
+  return filled.clamp(0.0, 1.0);
+}
+
+/// Official turn work-status label (chat.history.*): running = 工作中
+/// {duration}, interrupted/failed = 已停止, completed = 已工作 {duration}
+/// (or 已处理 when no duration was reported).
+String turnWorkLabel({required String state, int? durationMs}) {
+  switch (state) {
+    case 'running':
+    case 'inputStreaming':
+      return durationMs == null || durationMs <= 0
+          ? '工作中'
+          : '工作中 ${formatTurnDuration(durationMs)}';
+    case 'completedInterrupted':
+    case 'cancelled':
+    case 'interrupted':
+    case 'failed':
+    case 'error':
+      return '已停止';
+    default:
+      return durationMs == null || durationMs <= 0
+          ? '已处理'
+          : '已工作 ${formatTurnDuration(durationMs)}';
+  }
+}
+
+/// zh compact duration (chat.history.duration.*): 秒/分/时/天, zero-value
+/// trailing units dropped, everything-zero collapses to 0秒.
+String formatTurnDuration(int ms) {
+  if (ms < 0) ms = 0;
+  final duration = Duration(milliseconds: ms);
+  final days = duration.inDays;
+  final hours = duration.inHours % 24;
+  final minutes = duration.inMinutes % 60;
+  final seconds = duration.inSeconds % 60;
+  final parts = <String>[
+    if (days > 0) '$days天',
+    if (hours > 0) '$hours时',
+    if (minutes > 0) '$minutes分',
+    if (seconds > 0) '$seconds秒',
+  ];
+  return parts.isEmpty ? '0秒' : parts.join();
+}
+
+/// Official default-open rule for a turn's collapsible history:
+/// the latest turn stays open while running; a lone turn with no assistant
+/// text yet stays open; everything else defaults to collapsed.
+bool turnDefaultOpen({
+  required bool isLastTurn,
+  required bool running,
+  required bool isOnlyTurn,
+  required bool hasAssistantText,
+}) {
+  return (isLastTurn && running) || (isOnlyTurn && !hasAssistantText);
+}
+
+/// Time-of-day greeting for the draft (empty) chat, official chat.empty
+/// greeting copy.
+String emptyGreeting(DateTime now) {
+  final h = now.hour;
+  if (h >= 5 && h < 8) return '早上好呀，新的一天开始啦';
+  if (h >= 8 && h < 11) return '上午好呀，有什么想让我帮忙的吗';
+  if (h >= 11 && h < 13) return '中午好呀，要不要先休息一下';
+  if (h >= 13 && h < 18) return '下午好呀，接下来交给我吧';
+  if (h >= 18 && h < 23) return '晚上好呀，今天辛苦啦';
+  return '夜深啦，别忘了照顾好自己哦';
+}
+
 /// Composer drafts survive leaving the chat page: keyed by session id, or
 /// by workspace for not-yet-created sessions. Cleared implicitly when the
 /// message is sent (the controller is cleared, which saves the empty text).
@@ -232,6 +471,12 @@ class _ChatPageState extends State<ChatPage> {
   String? _error;
   bool _sending = false;
   final List<Map<String, dynamic>> _echoes = [];
+
+  /// Turn collapse state (official model): user override per turn, plus the
+  /// previously seen default so a running→completed flip clears the
+  /// override and the turn auto-collapses.
+  final Map<String, bool> _turnExpandedOverrides = {};
+  final Map<String, bool> _turnPrevDefault = {};
 
   void _dedupeEchoes() {
     final state = _state;
@@ -1329,11 +1574,14 @@ class _ChatPageState extends State<ChatPage> {
   Widget _buildModeChip() {
     final isFull = _currentModeValue == 'yolo' ||
         _currentModeValue.toLowerCase() == 'fullaccess';
+    // 官方模式 chip：<@xl 只有 icon，≥@xl 恢复图标+文本。
+    final iconOnly = MediaQuery.sizeOf(context).width < _composerXl;
     return ComposerChip(
       icon: isFull ? Icons.gpp_maybe : Icons.shield_outlined,
       label: _currentModeLabel,
       labelColor: isFull ? _fullAccessInkFor(context) : null,
-      tooltip: '协作模式',
+      iconOnly: iconOnly,
+      tooltip: '协作模式 · $_currentModeLabel',
       menuBuilder: (context, close) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
@@ -1354,13 +1602,16 @@ class _ChatPageState extends State<ChatPage> {
   Widget _buildModelChip() {
     final option = _modelOption;
     final available = option != null && option.options.isNotEmpty;
+    // 官方模型 chip：<@sm 只有 icon，≥@sm 显示模型名。
+    final iconOnly = MediaQuery.sizeOf(context).width < _composerSm;
     return ComposerChip(
       icon: Icons.radio_button_checked_outlined,
       label: available || _currentModelLabel.isNotEmpty
           ? _currentModelLabel
           : '模型',
       enabled: available,
-      tooltip: '模型',
+      iconOnly: iconOnly,
+      tooltip: '模型 · $_currentModelLabel',
       menuBuilder: (context, close) => ComposerModelMenuBody(
         options: option!.options,
         currentModelValue: _currentModelValue,
@@ -1374,11 +1625,25 @@ class _ChatPageState extends State<ChatPage> {
 
   Widget _buildThoughtChip() {
     final entries = _thoughtMenuEntries();
+    // 官方思考 chip：<@sm 只有 icon；@sm..@xl 图标+绿色竖条（填充高度=
+    // 档位进度）；≥@xl 图标+文本标签。
+    final width = MediaQuery.sizeOf(context).width;
+    final iconOnly = width < _composerSm;
+    final values = <String>[
+      for (final o in _thoughtOption?.options ?? const <ConfigOptionValue>[])
+        o.value,
+      if (_thoughtOption?.options.isEmpty ?? true)
+        ...?_state?.thoughtLevels,
+    ];
     return ComposerChip(
       icon: Icons.psychology_outlined,
       label: _currentThoughtLabel,
       enabled: entries.isNotEmpty,
-      tooltip: '思考强度',
+      iconOnly: iconOnly,
+      barFill: !iconOnly && width < _composerXl && values.isNotEmpty
+              ? thoughtBarFill(values, _currentThoughtValue)
+              : null,
+      tooltip: '思考强度 · $_currentThoughtLabel',
       menuBuilder: (context, close) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
@@ -1393,6 +1658,25 @@ class _ChatPageState extends State<ChatPage> {
             ),
         ],
       ),
+    );
+  }
+
+  /// Context-usage ring for the composer toolbar (official chat toolbar
+  /// parity). Reacts to subscription updates; hidden until the desktop
+  /// reports a usable context window.
+  Widget _buildUsageRing() {
+    final state = _state;
+    if (state == null) return const SizedBox.shrink();
+    return AnimatedBuilder(
+      animation: state,
+      builder: (context, _) {
+        final info = parseContextWindowInfo(state.usage);
+        if (info == null) return const SizedBox.shrink();
+        return _ContextUsageRing(
+          ratio: info.ratio,
+          onTap: _showUsageSheet,
+        );
+      },
     );
   }
 
@@ -1594,17 +1878,29 @@ class _ChatPageState extends State<ChatPage> {
                     TextButton(onPressed: _subscribe, child: const Text('重试')),
               ),
             ),
-          if (state != null && !widget.isSideChat)
-            AnimatedBuilder(
-              animation: state,
-              builder: (context, _) => _ContextUsageBar(state: state),
-            ),
           Expanded(
             child: state == null
                 ? Center(
                     child: _sessionId == null
-                        ? Text('输入消息开始新会话',
-                            style: TextStyle(color: ZInk.faint(context)))
+                        ? Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(emptyGreeting(DateTime.now()),
+                                  style: TextStyle(
+                                      fontSize: 17,
+                                      fontWeight: FontWeight.w600,
+                                      color: ZInk.solid(context))),
+                              const SizedBox(height: 6),
+                              Text(
+                                widget.workspaceName == null
+                                    ? '开始新的对话'
+                                    : '开始在 ${widget.workspaceName} 项目新建任务',
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    color: ZInk.faint(context)),
+                              ),
+                            ],
+                          )
                         : const CircularProgressIndicator(),
                   )
                 : !state.ready
@@ -1667,12 +1963,45 @@ class _ChatPageState extends State<ChatPage> {
                                 );
                               }
                               final group = groups[contentIndex];
+                              final turnKey =
+                                  't${group.first['rowId'] ?? contentIndex}';
+                              final running = group.any((r) {
+                                if (r['state'] == 'streaming') return true;
+                                if (r['kind'] == 'turnHeader' &&
+                                    r['state'] == 'running') {
+                                  return true;
+                                }
+                                final s = r['status'] as String? ?? '';
+                                return s == 'running' ||
+                                    s == 'inputStreaming' ||
+                                    s == 'pendingApproval';
+                              });
+                              final hasAssistantText =
+                                  group.any((r) => r['kind'] == 'assistantText');
+                              final defaultOpen = turnDefaultOpen(
+                                isLastTurn: contentIndex == groups.length - 1,
+                                running: running,
+                                isOnlyTurn: groups.length == 1,
+                                hasAssistantText: hasAssistantText,
+                              );
+                              if (_turnPrevDefault[turnKey] != null &&
+                                  _turnPrevDefault[turnKey] != defaultOpen) {
+                                // default flipped (turn finished) — drop the
+                                // user override so the turn auto-collapses.
+                                _turnExpandedOverrides.remove(turnKey);
+                              }
+                              _turnPrevDefault[turnKey] = defaultOpen;
                               return _TurnGroupWidget(
                                 rows: group,
                                 transport: _transport,
                                 sessionId: _sessionId ?? '',
                                 onAction: _run,
                                 state: state,
+                                sideChat: widget.isSideChat,
+                                turnExpanded: _turnExpandedOverrides[turnKey] ??
+                                    defaultOpen,
+                                onToggleExpanded: (open) => setState(
+                                    () => _turnExpandedOverrides[turnKey] = open),
                               );
                             },
                           );
@@ -1686,7 +2015,7 @@ class _ChatPageState extends State<ChatPage> {
               builder: (context, _) => Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  _GoalBanner(state: state),
+                  if (!widget.isSideChat) _GoalBanner(state: state),
                   _ActiveExecutionBar(state: state),
                   _ConversationInsights(
                     state: state,
@@ -1766,6 +2095,7 @@ class _ChatPageState extends State<ChatPage> {
             modeChip: _buildModeChip(),
             modelChip: _buildModelChip(),
             thoughtChip: _buildThoughtChip(),
+            usageRing: _buildUsageRing(),
           ),
         ],
       ),
@@ -1913,12 +2243,27 @@ class _TurnGroupWidget extends StatelessWidget {
   final Future<void> Function(String, Future<dynamic> Function()) onAction;
   final ConversationState state;
 
+  /// Auxiliary (side) chats render clean: no turn duration header, no
+  /// goal banner, no feedback/fork/edit affordances (official selection
+  /// side chat gates those out).
+  final bool sideChat;
+
+  /// Whether the collapsible assistant history starts expanded (official
+  /// turn model: latest turn open while running, completed turns collapse).
+  final bool turnExpanded;
+
+  /// User toggled the turn collapse state.
+  final ValueChanged<bool>? onToggleExpanded;
+
   const _TurnGroupWidget({
     required this.rows,
     required this.transport,
     required this.sessionId,
     required this.onAction,
     required this.state,
+    this.sideChat = false,
+    this.turnExpanded = true,
+    this.onToggleExpanded,
   });
 
   @override
@@ -1927,33 +2272,53 @@ class _TurnGroupWidget extends StatelessWidget {
     if (rows.length == 1 && rows.first['kind'] == 'timelineMarker') {
       return _TimelineMarkerWidget(row: rows.first);
     }
-    final first = rows.first;
-    if (first['kind'] == 'userInput') {
-      // user message + anything attached to the same turn
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
+    // leading user message(s) of the turn
+    var lead = 0;
+    while (lead < rows.length && rows[lead]['kind'] == 'userInput') {
+      lead++;
+    }
+    final userRows = rows.sublist(0, lead);
+    final assistantRows = rows.sublist(lead);
+    final parts = assistantTurnParts(assistantRows);
+    final showTurnHeader = !sideChat && assistantRows.isNotEmpty;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var i = 0; i < userRows.length; i++) ...[
+          if (i > 0) const SizedBox(height: 12),
           _RowWidget(
-            row: first,
+            row: userRows[i],
             transport: transport,
             sessionId: sessionId,
             onAction: onAction,
             state: state,
+            sideChat: sideChat,
           ),
-          for (final row in rows.skip(1))
-            _RowWidget(
-              row: row,
-              transport: transport,
-              sessionId: sessionId,
-              onAction: onAction,
-              state: state,
-            ),
         ],
-      );
-    }
-    // assistant turn: render parts in original order (reasoning → text →
-    // tool → text …); feedback buttons appear only on the LAST text segment.
-    final parts = assistantTurnParts(rows);
+        if (assistantRows.isNotEmpty) ...[
+          if (userRows.isNotEmpty) const SizedBox(height: 20),
+          if (showTurnHeader) ...[
+            _buildTurnTrigger(context, parts, assistantRows),
+            // collapsible content follows the bordered trigger directly
+            AnimatedSize(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOutCubic,
+              alignment: Alignment.topCenter,
+              child: turnExpanded
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: _assistantChildren(parts),
+                    )
+                  : const SizedBox(width: double.infinity),
+            ),
+          ] else
+            ..._assistantChildren(parts),
+        ],
+      ],
+    );
+  }
+
+  List<Widget> _assistantChildren(AssistantTurnParts parts) {
     var lastTextIdx = -1;
     for (var i = 0; i < parts.parts.length; i++) {
       if (parts.parts[i].kind == 'text') lastTextIdx = i;
@@ -1969,11 +2334,12 @@ class _TurnGroupWidget extends StatelessWidget {
             'text': p.text,
             if (p.streaming) 'state': 'streaming',
           },
-          showFeedback: i == lastTextIdx,
+          showFeedback: i == lastTextIdx && !sideChat,
           transport: transport,
           sessionId: sessionId,
           onAction: onAction,
           state: state,
+          sideChat: sideChat,
         ));
       } else if (_isExecutionRow(p.row!)) {
         final executionRows = <Map<String, dynamic>>[p.row!];
@@ -1997,15 +2363,60 @@ class _TurnGroupWidget extends StatelessWidget {
           sessionId: sessionId,
           onAction: onAction,
           state: state,
+          sideChat: sideChat,
         ));
       }
     }
+    return children;
+  }
+
+  /// Official turn trigger (`PX`): 「已工作 3m2s」 subtle label + rotating
+  /// chevron, bottom hairline; tap collapses/expands the turn history.
+  Widget _buildTurnTrigger(BuildContext context, AssistantTurnParts parts,
+      List<Map<String, dynamic>> assistantRows) {
     final header = parts.header;
-    if (header != null) children.add(_TurnHeader(row: header));
-    if (children.isEmpty) return const SizedBox.shrink();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: children,
+    String st = header?['state'] as String? ?? '';
+    final ms = (header?['activeMs'] as num?)?.toInt();
+    if (st.isEmpty || st == 'running') {
+      final anyRunning = assistantRows.any((r) {
+        if (r['state'] == 'streaming') return true;
+        final s = r['status'] as String? ?? '';
+        return s == 'running' || s == 'inputStreaming' || s == 'pendingApproval';
+      });
+      if (st != 'running' && anyRunning) st = 'running';
+    }
+    final label = turnWorkLabel(state: st, durationMs: ms);
+    return InkWell(
+      onTap: onToggleExpanded == null
+          ? null
+          : () => onToggleExpanded!(!turnExpanded),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.only(top: 2, bottom: 8),
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(
+                color: ZInk.messageBorder(context).withValues(alpha: 0.5)),
+          ),
+        ),
+        child: Row(
+          children: [
+            AnimatedRotation(
+              turns: turnExpanded ? 0.0 : -0.25,
+              duration: const Duration(milliseconds: 150),
+              child: Icon(Icons.expand_more,
+                  size: 16, color: ZInk.faint(context)),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 13, color: ZInk.muted(context))),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -2183,6 +2594,7 @@ class _RowWidget extends StatelessWidget {
   final Future<void> Function(String, Future<dynamic> Function()) onAction;
   final ConversationState state;
   final bool showFeedback;
+  final bool sideChat;
 
   const _RowWidget({
     required this.row,
@@ -2191,6 +2603,7 @@ class _RowWidget extends StatelessWidget {
     required this.onAction,
     required this.state,
     this.showFeedback = true,
+    this.sideChat = false,
   });
 
   Map<String, dynamic> get _target => {
@@ -2349,12 +2762,18 @@ class _RowWidget extends StatelessWidget {
           streaming: row['state'] == 'streaming'),
       'toolCall' => _ToolCallTile(row: row),
       'turnHeader' => _TurnHeader(row: row),
+      'changeSummary' => _ChangeSummaryCard(
+          row: row,
+          transport: transport,
+          sessionId: sessionId,
+          onAction: onAction),
       'subagent' => _SubagentTile(row: row),
       'timelineMarker' => _TimelineMarkerWidget(row: row),
       _ => const SizedBox.shrink(),
     };
     final kind = row['kind'];
     if (kind != 'userInput' && kind != 'assistantText') return widget_;
+    if (sideChat) return widget_;
     return GestureDetector(
       onLongPress: () => _showActions(context),
       child: widget_,
@@ -3316,6 +3735,227 @@ class _ToolCallTileState extends State<_ToolCallTile> {
   }
 }
 
+/// Official change-summary card (`utt`): header row with file count and
+/// +N -N diff counters, expandable per-file rows, review/rewind actions.
+class _ChangeSummaryCard extends StatefulWidget {
+  final Map<String, dynamic> row;
+  final ConversationTransport transport;
+  final String sessionId;
+  final Future<void> Function(String, Future<dynamic> Function()) onAction;
+
+  const _ChangeSummaryCard({
+    required this.row,
+    required this.transport,
+    required this.sessionId,
+    required this.onAction,
+  });
+
+  @override
+  State<_ChangeSummaryCard> createState() => _ChangeSummaryCardState();
+}
+
+class _ChangeSummaryCardState extends State<_ChangeSummaryCard> {
+  bool _expanded = false;
+
+  ({List<({String path, int added, int removed})> files, int added, int removed})
+      _parse() {
+    final files = <({String path, int added, int removed})>[];
+    final raw = widget.row['files'];
+    if (raw is List) {
+      for (final entry in raw) {
+        if (entry is String) {
+          files.add((path: entry, added: 0, removed: 0));
+        } else if (entry is Map) {
+          final path =
+              '${entry['path'] ?? entry['filePath'] ?? entry['file'] ?? entry['name'] ?? ''}';
+          if (path.isEmpty) continue;
+          files.add((
+            path: path,
+            added: (entry['additions'] as num?)?.toInt() ?? 0,
+            removed: (entry['deletions'] as num?)?.toInt() ?? 0,
+          ));
+        }
+      }
+    }
+    var added = (widget.row['additions'] as num?)?.toInt();
+    var removed = (widget.row['deletions'] as num?)?.toInt();
+    if (added == null || removed == null) {
+      var a = 0;
+      var r = 0;
+      for (final f in files) {
+        a += f.added;
+        r += f.removed;
+      }
+      added ??= files.isEmpty ? 0 : a;
+      removed ??= files.isEmpty ? 0 : r;
+    }
+    return (files: files, added: added, removed: removed);
+  }
+
+  Map<String, dynamic> get _target => {
+        'rowId': widget.row['rowId'],
+        if (widget.row['entityId'] != null) 'entityId': widget.row['entityId'],
+      };
+
+  Future<void> _rewind() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('撤销文件改动'),
+        content: const Text(
+            '撤销前会重新检查当前文件内容；如果文件已被其他进程改过，本次不会写入任何文件。'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('撤销文件')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await widget.onAction('撤销失败',
+        () => widget.transport.applyFileRewind(widget.sessionId, _target));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final (:files, :added, :removed) = _parse();
+    final cardColor = Theme.of(context).brightness == Brightness.light
+        ? ZColors.composerLight
+        : ZColors.composerDark;
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, bottom: 6, right: 16),
+      child: Container(
+        decoration: BoxDecoration(
+          color: cardColor,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: ZInk.messageBorder(context)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            InkWell(
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(12)),
+              onTap:
+                  files.isEmpty ? null : () => setState(() => _expanded = !_expanded),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: SizedBox(
+                  height: 40,
+                  child: Row(
+                    children: [
+                      AnimatedRotation(
+                        turns: _expanded ? 0.25 : 0,
+                        duration: const Duration(milliseconds: 150),
+                        child: Icon(Icons.expand_more,
+                            size: 14, color: ZInk.faint(context)),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text('${files.length} 个文件已更改',
+                            style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                                color: ZInk.solid(context))),
+                      ),
+                      Text('+$added',
+                          style: TextStyle(
+                              fontFamily: 'monospace',
+                              fontSize: 12,
+                              color: ZInk.diffAdded(context))),
+                      const SizedBox(width: 5),
+                      Text('-$removed',
+                          style: TextStyle(
+                              fontFamily: 'monospace',
+                              fontSize: 12,
+                              color: ZInk.diffRemoved(context))),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            if (_expanded && files.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 0, 10, 4),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (final f in files)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 3),
+                        child: Row(
+                          children: [
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: Text(f.path,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      fontFamily: 'monospace',
+                                      color: ZInk.muted(context))),
+                            ),
+                            Text('+${f.added}',
+                                style: TextStyle(
+                                    fontFamily: 'monospace',
+                                    fontSize: 11,
+                                    color: ZInk.diffAdded(context))),
+                            const SizedBox(width: 4),
+                            Text('-${f.removed}',
+                                style: TextStyle(
+                                    fontFamily: 'monospace',
+                                    fontSize: 11,
+                                    color: ZInk.diffRemoved(context))),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 2, 8, 8),
+              child: Row(
+                children: [
+                  TextButton.icon(
+                    onPressed: () async {
+                      try {
+                        final changes = await widget.transport
+                            .fileChanges(widget.sessionId, target: _target);
+                        if (!context.mounted) return;
+                        showModalBottomSheet(
+                          context: context,
+                          builder: (sheetContext) => _StructuredSheet(
+                              title: '文件变更', data: changes),
+                        );
+                      } catch (e) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('获取失败: $e')));
+                        }
+                      }
+                    },
+                    icon: const Icon(Icons.search, size: 15),
+                    label: const Text('审查', style: TextStyle(fontSize: 12)),
+                  ),
+                  const SizedBox(width: 4),
+                  TextButton.icon(
+                    onPressed: _rewind,
+                    icon: const Icon(Icons.undo, size: 15),
+                    label: const Text('撤销', style: TextStyle(fontSize: 12)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _ProgressRow extends StatelessWidget {
   final Map progress;
 
@@ -3357,52 +3997,12 @@ class _TurnHeader extends StatelessWidget {
 
   const _TurnHeader({required this.row});
 
-  String _fmtDuration(int? ms) {
-    if (ms == null) return '';
-    if (ms < 1000) return '${ms}ms';
-    final totalSeconds = (ms / 1000).round();
-    if (totalSeconds < 60) return '${(ms / 1000).toStringAsFixed(1)}s';
-    final m = totalSeconds ~/ 60;
-    return '${m}m${totalSeconds % 60}s';
-  }
-
   @override
   Widget build(BuildContext context) {
-    final state = row['state'] as String? ?? '';
-    final fileChanges = row['fileChanges'];
-    final duration = _fmtDuration((row['activeMs'] as num?)?.toInt());
-
-    String stats = '';
-    if (fileChanges is Map) {
-      final adds = fileChanges['additions'];
-      final dels = fileChanges['deletions'];
-      final files = fileChanges['files'];
-      final parts = <String>[
-        if (adds is num && adds > 0) '+$adds',
-        if (dels is num && dels > 0) '-$dels',
-        if (files is num && files > 0) '$files 文件',
-      ];
-      stats = parts.join(' ');
-    }
-
-    final label = switch (state) {
-      'running' => '本轮执行中',
-      'completedSuccess' => [
-          '本轮完成',
-          if (duration.isNotEmpty) duration,
-        ].join(' · '),
-      'completedInterrupted' => '已中断',
-      'failed' => '本轮失败',
-      _ => '',
-    };
-    if (label.isEmpty) return const SizedBox.shrink();
-    final color = switch (state) {
-      'running' => ZColors.running,
-      'failed' => ZColors.danger,
-      'completedInterrupted' => ZColors.warning,
-      _ => ZInk.muted(context),
-    };
-    // 官方 turnHeader（Jat）：左对齐 subtle 小字 + 底部发丝分隔线。
+    // 官方 turnHeader（PX）：subtle 一行「已工作 {duration}」，无色彩编码。
+    final st = row['state'] as String? ?? '';
+    final ms = (row['activeMs'] as num?)?.toInt();
+    final label = turnWorkLabel(state: st, durationMs: ms);
     return Container(
       margin: const EdgeInsets.only(top: 10, bottom: 6),
       padding: const EdgeInsets.only(bottom: 6),
@@ -3410,15 +4010,8 @@ class _TurnHeader extends StatelessWidget {
         border: Border(
             bottom: BorderSide(color: ZInk.messageBorder(context))),
       ),
-      child: Row(
-        children: [
-          Text(label, style: TextStyle(fontSize: 12, color: color)),
-          if (stats.isNotEmpty) ...[
-            const SizedBox(width: 8),
-            Text(stats, style: TextStyle(fontSize: 12, color: ZInk.faint(context))),
-          ],
-        ],
-      ),
+      child: Text(label,
+          style: TextStyle(fontSize: 12, color: ZInk.muted(context))),
     );
   }
 }
@@ -3543,48 +4136,77 @@ class _SubagentTile extends StatelessWidget {
 
 // ---------------------------------------------------------------- bars
 
-class _ContextUsageBar extends StatelessWidget {
-  final ConversationState state;
+/// Composer context-usage ring (official chat toolbar parity): a tiny
+/// circular progress arc — track 25% ink, used 70% ink, round cap starting
+/// at 12 o'clock. Tap opens the usage sheet (context composition +
+/// cache hit rate + cumulative tokens).
+class _ContextUsageRing extends StatelessWidget {
+  final double ratio;
+  final VoidCallback onTap;
 
-  const _ContextUsageBar({required this.state});
+  const _ContextUsageRing({required this.ratio, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    final usage = state.usage;
-    final window = usage?['contextWindow'];
-    if (window is! Map) return const SizedBox.shrink();
-    final used = (window['usedTokens'] as num?)?.toInt();
-    final max = (window['maxTokens'] as num?)?.toInt();
-    if (used == null || max == null || max <= 0) {
-      return const SizedBox.shrink();
-    }
-    final ratio = (used / max).clamp(0.0, 1.0);
-    final color = ratio > 0.8 ? ZColors.warning : ZColors.primary;
-    String fmt(int v) => v >= 1000 ? '${(v / 1000).toStringAsFixed(1)}k' : '$v';
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
-      child: Row(
-        children: [
-          Expanded(
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(3),
-              child: LinearProgressIndicator(
-                value: ratio,
-                minHeight: 4,
-                backgroundColor: ZInk.tile(context),
-                valueColor: AlwaysStoppedAnimation(color),
-              ),
-            ),
+    return Tooltip(
+      message: '上下文容量',
+      child: InkWell(
+        onTap: onTap,
+        customBorder: const CircleBorder(),
+        child: Padding(
+          padding: const EdgeInsets.all(5),
+          child: CustomPaint(
+            size: const Size(20, 20),
+            painter: _UsageRingPainter(ratio, color: ZInk.muted(context)),
           ),
-          const SizedBox(width: 8),
-          Text(
-            '${fmt(used)}/${fmt(max)}',
-            style: TextStyle(fontSize: 10, color: color),
-          ),
-        ],
+        ),
       ),
     );
   }
+}
+
+class _UsageRingPainter extends CustomPainter {
+  final double ratio;
+  final Color color;
+
+  _UsageRingPainter(this.ratio, {required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.width / 2 - 1.5;
+    final track = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3
+      ..color = color.withValues(alpha: 0.25);
+    canvas.drawCircle(center, radius, track);
+    final sweep = 2 * 3.141592653589793 * ratio.clamp(0.0, 1.0);
+    if (sweep <= 0) return;
+    final progress = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3
+      ..strokeCap = StrokeCap.round
+      ..color = color.withValues(alpha: 0.7);
+    canvas.drawArc(Rect.fromCircle(center: center, radius: radius),
+        -3.141592653589793 / 2, sweep, false, progress);
+  }
+
+  @override
+  bool shouldRepaint(_UsageRingPainter oldDelegate) =>
+      oldDelegate.ratio != ratio || oldDelegate.color != color;
+}
+
+/// Segment colors for the context composition bar — official palette is a
+/// five-step mix of usage-chart-1 (sky) toward the surface color.
+List<Color> usageSegmentColors(BuildContext context) {
+  final base = Theme.of(context).brightness == Brightness.light
+      ? const Color(0xFF0284C7)
+      : const Color(0xFF0EA5E9);
+  final surface = Theme.of(context).scaffoldBackgroundColor;
+  return [
+    for (final f in const [1.0, 0.78, 0.58, 0.42, 0.28])
+      Color.lerp(surface, base, f)!,
+  ];
 }
 
 class _GoalBanner extends StatelessWidget {
@@ -4877,7 +5499,8 @@ class _UsageSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final usage = state.usage ?? const {};
     final cumulative = usage['cumulative'];
-    final contextWindow = usage['contextWindow'];
+    final info = parseContextWindowInfo(usage);
+    final colors = usageSegmentColors(context);
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -4885,20 +5508,113 @@ class _UsageSheet extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('用量统计',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 16),
-            if (contextWindow is Map) ...[
-              _UsageRow('上下文',
-                  '${contextWindow['usedTokens'] ?? '-'} / ${contextWindow['maxTokens'] ?? '-'} tokens'),
+            if (info != null) ...[
+              // 官方用量卡：标题行 + mono 已用/总量(百分比)，下接分段组成条。
+              Row(
+                children: [
+                  const Text('上下文容量',
+                      style:
+                          TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                  const Spacer(),
+                  Text(
+                    '${formatCompactTokens(info.usedTokens)} / '
+                    '${formatCompactTokens(info.maxTokens)} '
+                    '(${formatUsagePercent(info.ratio)})',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontFamily: 'monospace',
+                        color: ZInk.muted(context)),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text('提示词、工具调用和回复都会共享上下文窗口。',
+                  style: TextStyle(fontSize: 11, color: ZInk.faint(context))),
+              const SizedBox(height: 12),
+              if (info.breakdown.isNotEmpty)
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: SizedBox(
+                    height: 8,
+                    child: Row(
+                      children: [
+                        for (var i = 0; i < info.breakdown.length; i++)
+                          Expanded(
+                            flex: info.breakdown[i].chars,
+                            child: ColoredBox(
+                              color: colors[i.clamp(0, colors.length - 1)],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              const SizedBox(height: 10),
+              for (var i = 0; i < info.breakdown.length; i++)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 3),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          color: colors[i.clamp(0, colors.length - 1)],
+                          borderRadius: BorderRadius.circular(2),
+                          border: Border.all(color: ZInk.messageBorder(context)),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        _contextSourceLabels[info.breakdown[i].source] ??
+                            info.breakdown[i].source,
+                        style: TextStyle(
+                            fontSize: 12, color: ZInk.muted(context)),
+                      ),
+                      const Spacer(),
+                      Text(
+                        formatUsagePercent(
+                            info.breakdown[i].chars /
+                                info.breakdown.fold<int>(
+                                    0, (sum, e) => sum + e.chars)),
+                        style: TextStyle(
+                            fontSize: 12,
+                            fontFamily: 'monospace',
+                            color: ZInk.soft(context)),
+                      ),
+                    ],
+                  ),
+                ),
+              if (info.cacheHitRate != null) ...[
+                const SizedBox(height: 6),
+                Divider(height: 1, color: ZInk.messageBorder(context)),
+                const SizedBox(height: 6),
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 3),
+                  child: Row(
+                    children: [
+                      Text('平均缓存命中率',
+                          style: TextStyle(
+                              fontSize: 12, color: ZInk.muted(context))),
+                      const Spacer(),
+                      Text(formatUsagePercent(info.cacheHitRate!),
+                          style: TextStyle(
+                              fontSize: 12,
+                              fontFamily: 'monospace',
+                              color: ZInk.soft(context))),
+                    ],
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
             ],
             if (cumulative is Map) ...[
               _UsageRow('累计输入', '${cumulative['inputTokens'] ?? 0}'),
               _UsageRow('累计输出', '${cumulative['outputTokens'] ?? 0}'),
               _UsageRow('缓存读取', '${cumulative['cacheReadTokens'] ?? 0}'),
               _UsageRow('缓存写入', '${cumulative['cacheWriteTokens'] ?? 0}'),
+              const SizedBox(height: 12),
             ],
-            const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
@@ -5210,10 +5926,12 @@ class _InputBar extends StatefulWidget {
   final VoidCallback onVoice;
 
   /// Inline config dropdowns built by [_ChatPageState] (official-web style:
-  /// mode / model / thought live INSIDE the composer toolbar).
+  /// mode / model / thought live INSIDE the composer toolbar). The usage
+  /// ring sits left of the model chip like the official chat toolbar.
   final Widget modeChip;
   final Widget modelChip;
   final Widget thoughtChip;
+  final Widget usageRing;
 
   const _InputBar({
     required this.controller,
@@ -5228,6 +5946,7 @@ class _InputBar extends StatefulWidget {
     required this.modeChip,
     required this.modelChip,
     required this.thoughtChip,
+    required this.usageRing,
   });
 
   @override
@@ -5315,6 +6034,8 @@ class _InputBarState extends State<_InputBar> {
                   const SizedBox(width: 2),
                   widget.modeChip,
                   const Spacer(),
+                  widget.usageRing,
+                  const SizedBox(width: 6),
                   widget.modelChip,
                   const SizedBox(width: 6),
                   widget.thoughtChip,

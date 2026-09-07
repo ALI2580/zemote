@@ -363,7 +363,12 @@ class _MainShellContentState extends State<_MainShellContent> {
   @override
   Widget build(BuildContext context) {
     final bridge = _bridge;
-    final wide = MediaQuery.sizeOf(context).width >= 720;
+    // Official desktop shell starts at 768px (mobile = <=767px + touch).
+    // Zemote lowers this to 640 so foldables in their narrow unfolded pose
+    // (~690dp) and 8-inch tablets in landscape (~640dp) still get the
+    // sidebar — the reported 0.6.1 issue was sidebar never appearing on
+    // such devices because the old threshold was 720.
+    final wide = MediaQuery.sizeOf(context).width >= 640;
     final content = Column(
       children: [
         if (!wide) _DeviceSwitcherBar(

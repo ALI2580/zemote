@@ -178,6 +178,77 @@ bg-surface px-4 py-3 text-ui-base text-foreground @min-[624px]/conversation:max-
   `_ReasoningTile`（紫标记 + surface）、theme.dart 新增
   `messageSurface/messageBorder/trajectory*` 常量。
 
+### 用量环形圈（composer 工具条，2026-09-07 抓包解密）
+
+- **环几何**：`svg size-3.5`（14px），viewBox 24，`r=10`，`strokeWidth=4`，
+  底环 `opacity:0.25` + 进度环 `opacity:0.7`，`strokeDasharray: C C`、
+  `strokeDashoffset: C*(1-ratio)`（C=2π·10≈62.8），`rotate(-90deg)` 从 12 点起，
+  `strokeLinecap:round`，颜色 `currentColor`（text-foreground-subtle）。
+  外层是 ghost icon-md 按钮；ratio=usedTokens/maxTokens clamp 0..1。
+- **悬浮卡（w-80 rounded-xl）**：
+  1. 头部行：`chat.contextUsage.title`「上下文容量」(font-medium) + 右侧 mono
+     `{used}/{total} ({percent%})`（compact 数字，如 4万/12.8万）。
+  2. 分段组成条：`h-2` 圆角条，segments=breakdown 按 chars 降序
+     （并列按固定序 messages>system_prompt>meta_user_context>skills>
+     tool_prompt>system_tool_schemas>mcp_tool_schemas），颜色=usage-chart-1
+     的 5 阶 `color-mix`（100%/78%/58%/42%/28% 混 surface）。
+     浅色 chart-1=sky-600 `#0284c7`，深色=sky-500 `#0ea5e9`。
+  3. 明细列表：色块(size-2 rounded-sm)+来源名(subtle)+mono 百分比；
+     百分比格式 `maximumFractionDigits: p>=0.1?0:1`。
+  4. 「平均缓存命中率」行：`border-t` 分隔，mono 百分比。
+  5. quota/plan 区（codingPlan 相关，Zemote 不做）。
+- **数据源**：快照 `usage.contextWindow`：
+  `{usedTokens, maxTokens, cache?: {hitRate}, breakdown?: [{source, chars}]}`。
+  breakdown 按 **chars 求和**（同名 source 累加）。旧桌面端可缺 cache/breakdown，
+  须宽松解析（Zemote `parseContextWindowInfo`）。
+- **来源中文标签**：messages 消息 / system_prompt 系统提示词 /
+  tool_prompt 工具提示词 / system_tool_schemas 系统工具 /
+  mcp_tool_schemas MCP 工具 / skills 技能 / meta_user_context 其他。
+- 文案：`chat.contextUsageDescription`「提示词、工具调用和回复都会共享上下文窗口。」；
+  `chat.contextUsage`「上下文已用 {used} / 总量 {total}」；
+  compress 相关键（压缩 / 发送 {command} 压缩当前上下文 / 打开 Token 调试）挂在
+  quota 区，未随环实现。
+
+### 辅助对话（selection side chat）官方语义（2026-09-07 解密）
+
+- 创建：`createSelectionSideSession {firstInput?: {text}}`——从主会话选区
+  「Ask in side chat」发起，pane 组件带 `selectionSideChat:true`。
+  桌面 schema 只接受 trim 后非空的 firstInput。
+- **官方门控**（pane 内 `!i&&!s` / `s?null:` 系列）：
+  - 隐藏 goal 横幅（`goal: s?null:…`）与 暂停/恢复 goal 入口；
+  - 隐藏 重试(retryTurn)/分叉(forkAssistant)/编辑重发(editUserQuery) 三个操作；
+  - 隐藏 点赞/点踩（onFeedbackChange null）；
+  - 禁止嵌套 side chat（selectionActions 关）；
+  - slash 面板不注册 `side`/`btw` 命令（那是主会话开辅助对话的入口）。
+  保留：消息流、composer、模型/模式/思考切换、用量环。
+- Zemote 落地：ChatPage.isSideChat → 隐藏 turnHeader（本轮完成·用时）、goal 横幅、
+  assistant 反馈/分叉行、长按操作菜单；用量环照常显示。
+
+### Composer 工具栏断点（容器查询，2026-09-07 第二轮解密）
+
+composer 容器名 `composer/inline-size`，Tailwind v4 容器档位（**容器宽**，
+非视口宽；移动端等效=窗口宽）：
+`@max-sm` <24rem=384px、`@sm` ≥384、`@lg` ≥512、`@xl` ≥576、`@2xl` ≥672。
+
+各 chip 形态（右侧组）：
+- **模型 chip（OF）**：<384px → size-7 方形纯图标（icon 类 `inline-flex @sm:hidden`）；
+  ≥384px → 图标+模型名（label `hidden @sm:inline-flex`）；≥672px → 模型名前
+  追加供应商前缀（prefix `hidden @2xl:inline`）。
+- **思考强度 chip（VI）**：<384px → 纯图标；384–576px → 图标+**绿色竖条**
+  （`w-1`(4px) 全高圆角条，轨道 `bg-current/10`，填充 `bg-success` 从底部
+  长出，`transition-[height]`）；≥576px → 图标+文本标签（竖条隐藏）。
+  竖条填充高度 `F = max(0, idx+1-off) / max(1, len-off)`：选项先按强度
+  rank 排序（off 族 0 / low 1 / medium 2 / high 3 / enabled 4 / xhigh 5 /
+  max 6），off 选项填 0，enabled 档位按名次进度填充。
+- **模式 chip**：<576px → size-7 纯图标；≥576px → 图标+文本。
+- 工具条左右分组：左 = 附加/更多 + 模式 chip；右 = 用量环 + 模型 + 思考
+  （+ 模式），`justify-end`。
+- **应用壳断点（非容器查询）**：mobile viewport =
+  `matchMedia("(max-width: 767px) and (hover: none) and (pointer: coarse)")`
+  ——desktop shell（侧边栏）出现在宽度 ≥768px **或**非触屏设备。
+  Zemote 有意下调到 640dp 以覆盖折叠屏窄展开态（~690dp）与 8 寸平板横屏
+  （~640dp）；主从布局 720dp（列表 360 + 聊天 ≥360）。
+
 ## 待挖清单（下次抓取时继续）
 
 - [ ] assistant 正文容器 / turnHeader / timeline marker 的精确 class
@@ -186,3 +257,5 @@ bg-surface px-4 py-3 text-ui-base text-foreground @min-[624px]/conversation:max-
 - [ ] files 菜单的本地索引/过滤实现（`PIe` → `jIe`/`AIe`，官方可能预建索引）。
 - [ ] `¥` 触发符的用途。
 - [ ] skill mention 的 value 字段内容（`Xx(e,t)` 的 t 来源）。
+- [x] ~~用量环 / 上下文明细 / 缓存命中率~~（2026-09-07 已解密，见「用量环形圈」节）。
+- [x] ~~辅助对话语义~~（2026-09-07 已解密，见「辅助对话」节）。

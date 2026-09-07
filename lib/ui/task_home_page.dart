@@ -119,8 +119,11 @@ class _TaskHomePageState extends State<TaskHomePage>
   int _draftSerial = 0;
   int _inlineDraft = 0;
 
+  // Aligned with the sidebar breakpoint (official desktop shell is 768px;
+  // Zemote uses 640 — see main_shell). 720 leaves >=360dp for the chat
+  // pane next to the 360dp list.
   bool get _masterDetail =>
-      MediaQuery.sizeOf(context).width >= 900;
+      MediaQuery.sizeOf(context).width >= 720;
 
   ConversationTransport? _convTransport;
   SessionsIndexSubscription? _sessionsSub;
@@ -613,6 +616,7 @@ class _TaskHomePageState extends State<TaskHomePage>
           scope: _scope,
           workspaceKey: _workspaceKey,
           title: '新任务',
+          workspaceName: workspaceTitle(widget.workspace),
         ),
       ),
     );
@@ -967,6 +971,7 @@ class _TaskHomePageState extends State<TaskHomePage>
         sessionId: _inlineTaskId,
         title: _inlineTaskTitle ?? '新任务',
         automaticallyImplyLeading: false,
+        workspaceName: workspaceTitle(widget.workspace),
         onSessionCreated: (sessionId) {
           setState(() => _inlineTaskId = sessionId);
           _load();

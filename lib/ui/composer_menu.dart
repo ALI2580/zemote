@@ -42,6 +42,11 @@ class ComposerMenuEntry {
 
 /// Anchored toolbar chip with a dropdown card pinned above it (official-web
 /// composer style). The chip owns its overlay; tapping outside closes it.
+///
+/// Narrow-composer variants (official container-query behavior): [iconOnly]
+/// drops the label and chevron for a square icon button; [barFill] renders
+/// the thought-level vertical bar instead of the label (official shows the
+/// bar between 384–576px composer widths, green fill = level progress).
 class ComposerChip extends StatefulWidget {
   final IconData icon;
   final String label;
@@ -49,6 +54,10 @@ class ComposerChip extends StatefulWidget {
   final double iconSize;
   final double fontSize;
   final bool enabled;
+  final bool iconOnly;
+
+  /// 0..1 — fill height of the vertical level bar; null hides the bar.
+  final double? barFill;
   final String? tooltip;
 
   /// Builds the dropdown content. [close] dismisses the menu — call it
@@ -64,6 +73,8 @@ class ComposerChip extends StatefulWidget {
     this.iconSize = 15,
     this.fontSize = 13,
     this.enabled = true,
+    this.iconOnly = false,
+    this.barFill,
     this.tooltip,
   });
 
@@ -127,21 +138,49 @@ class _ComposerChipState extends State<ComposerChip> {
   @override
   Widget build(BuildContext context) {
     final chipColor = widget.labelColor ?? ZInk.soft(context);
+    final showBar = widget.barFill != null && !widget.iconOnly;
     final chip = Container(
       decoration: BoxDecoration(
         color: _open ? ZInk.tile(context) : Colors.transparent,
         borderRadius: BorderRadius.circular(8),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      padding: EdgeInsets.symmetric(
+          horizontal: widget.iconOnly ? 6 : 8, vertical: 6),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(widget.icon, size: widget.iconSize, color: chipColor),
-          const SizedBox(width: 5),
-          Text(widget.label,
-              style: TextStyle(fontSize: widget.fontSize, color: chipColor)),
-          const SizedBox(width: 2),
-          Icon(Icons.expand_more, size: 14, color: chipColor),
+          // 官方思考强度竖条（@sm..@xl 区间）：4px 宽圆角条，success 绿从
+          // 底部填充，填充高度 = 当前档位在已启用档位中的进度。
+          if (showBar) ...[
+            const SizedBox(width: 6),
+            Container(
+              width: 4,
+              height: 18,
+              decoration: BoxDecoration(
+                color: chipColor.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(2),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(2),
+                child: Align(
+                  alignment: Alignment.bottomCenter,
+                  child: FractionallySizedBox(
+                    heightFactor: widget.barFill!.clamp(0.0, 1.0),
+                    child: Container(color: ZColors.success),
+                  ),
+                ),
+              ),
+            ),
+          ],
+          if (!widget.iconOnly && widget.barFill == null) ...[
+            const SizedBox(width: 5),
+            Text(widget.label,
+                style: TextStyle(
+                    fontSize: widget.fontSize, color: chipColor)),
+            const SizedBox(width: 2),
+            Icon(Icons.expand_more, size: 14, color: chipColor),
+          ],
         ],
       ),
     );
