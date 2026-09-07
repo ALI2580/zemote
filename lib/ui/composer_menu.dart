@@ -1,6 +1,9 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../protocol/conversation.dart';
+import 'official_icons.dart';
 import 'theme.dart';
 
 /// Groups model options by provider, preserving first-appearance order.
@@ -53,6 +56,10 @@ class ComposerMenuEntry {
 /// spring curve, 4px minimum visible fill, shown 384–576px only).
 class ComposerChip extends StatefulWidget {
   final IconData icon;
+
+  /// Official lucide glyph name (kOfficialIcons) — takes precedence over
+  /// [icon] when set, so the toolbar uses the exact official artwork.
+  final String? lucideIcon;
   final String label;
 
   /// Optional provider prefix rendered before [label] (official model chip
@@ -80,9 +87,10 @@ class ComposerChip extends StatefulWidget {
     required this.icon,
     required this.label,
     required this.menuBuilder,
+    this.lucideIcon,
     this.prefixLabel,
     this.labelColor,
-    this.iconSize = 15,
+    this.iconSize = 16,
     this.fontSize = 13,
     this.enabled = true,
     this.iconOnly = false,
@@ -106,6 +114,13 @@ class _ComposerChipState extends State<ComposerChip> {
       return;
     }
     final overlay = Overlay.of(context, rootOverlay: true);
+    // 官方 radix popper 的碰撞翻转：chip 落在屏幕右半时菜单改为右对齐，
+    // 卡片宽度钳制到屏宽内，避免模型/思考菜单从右侧溢出。
+    final box = context.findRenderObject() as RenderBox?;
+    final screenW = MediaQuery.sizeOf(context).width;
+    final rightEdge = box != null ? box.localToGlobal(Offset.zero).dx + box.size.width : 0.0;
+    final alignRight = screenW - rightEdge < 180;
+    final cardWidth = math.min(288.0, screenW - 16);
     _entry = OverlayEntry(
       builder: (context) => Stack(
         children: [
@@ -118,13 +133,15 @@ class _ComposerChipState extends State<ComposerChip> {
           ),
           CompositedTransformFollower(
             link: _link,
-            targetAnchor: Alignment.topLeft,
-            followerAnchor: Alignment.bottomLeft,
+            targetAnchor: alignRight ? Alignment.topRight : Alignment.topLeft,
+            followerAnchor:
+                alignRight ? Alignment.bottomRight : Alignment.bottomLeft,
             offset: const Offset(0, -6),
             showWhenUnlinked: false,
             child: Material(
               color: Colors.transparent,
               child: ComposerMenuCard(
+                  maxWidth: cardWidth,
                   child: widget.menuBuilder(context, _close)),
             ),
           ),
@@ -168,7 +185,10 @@ class _ComposerChipState extends State<ComposerChip> {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (widget.showIcon)
-            Icon(widget.icon, size: widget.iconSize, color: chipColor),
+            widget.lucideIcon != null
+                ? LucideIcon(widget.lucideIcon!,
+                    size: widget.iconSize, color: chipColor)
+                : Icon(widget.icon, size: widget.iconSize, color: chipColor),
           // 官方思考强度竖条（VI，@sm..@xl）：w-1 全高圆角轨道
           // bg-current/10，success 填充自底部长出，300ms 弹性曲线，
           // 填充 >0 时至少 4px 可见（min-h-1）。
@@ -188,7 +208,7 @@ class _ComposerChipState extends State<ComposerChip> {
                 style: TextStyle(
                     fontSize: widget.fontSize, color: chipColor)),
             const SizedBox(width: 2),
-            Icon(Icons.expand_more, size: 14, color: chipColor),
+            LucideIcon('chevron-down', size: 14, color: chipColor),
           ],
         ],
       ),
@@ -248,15 +268,19 @@ class _ThoughtLevelBar extends StatelessWidget {
 }
 
 /// Dropdown card container (dark: near-black, light: white — panel tones).
+/// [maxWidth] clamps the card to the available screen width so menus never
+/// overflow narrow composers.
 class ComposerMenuCard extends StatelessWidget {
   final Widget child;
+  final double maxWidth;
 
-  const ComposerMenuCard({super.key, required this.child});
+  const ComposerMenuCard(
+      {super.key, required this.child, this.maxWidth = 288});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 288,
+      width: math.min(288.0, maxWidth),
       constraints: const BoxConstraints(maxHeight: 420),
       decoration: BoxDecoration(
         color: ZInk.panel(context),

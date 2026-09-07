@@ -15,6 +15,7 @@ import 'composer_menu.dart';
 import 'diff_view.dart';
 import 'markdown_view.dart';
 import 'mention_menu.dart';
+import 'official_icons.dart';
 import 'theme.dart';
 import 'structured_data_view.dart';
 import '../voice/voice_model_store.dart';
@@ -1596,13 +1597,15 @@ class _ChatPageState extends State<ChatPage> {
     ];
   }
 
-  Widget _buildModeChip() {
+  Widget _buildModeChip(double composerWidth) {
     final isFull = _currentModeValue == 'yolo' ||
         _currentModeValue.toLowerCase() == 'fullaccess';
-    // 官方模式 chip：<@xl 只有 icon，≥@xl 恢复图标+文本。
-    final iconOnly = MediaQuery.sizeOf(context).width < _composerXl;
+    // 官方模式 chip（II 组件）：宽度按 composer 容器实测（LayoutBuilder），
+    // <@xl(576) 只有 icon，≥@xl 恢复图标+文本。
+    final iconOnly = composerWidth < _composerXl;
     return ComposerChip(
       icon: isFull ? Icons.gpp_maybe : Icons.shield_outlined,
+      lucideIcon: 'sliders-horizontal',
       label: _currentModeLabel,
       labelColor: isFull ? _fullAccessInkFor(context) : null,
       iconOnly: iconOnly,
@@ -1624,23 +1627,23 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  Widget _buildModelChip() {
+  Widget _buildModelChip(double composerWidth) {
     final option = _modelOption;
     final available = option != null && option.options.isNotEmpty;
     // 官方模型 chip（OF 调用点）：<384px = size-7 方形纯图标（package）；
     // ≥384px 图标隐藏、显示模型名+chevron；≥672px 模型名前追加供应商
     // 前缀。tooltip 固定「选择模型」（chat.toolbar.model.label）。
-    final width = MediaQuery.sizeOf(context).width;
     final (prefix, modelLabel) = _modelPrefixAndLabel;
     return ComposerChip(
       icon: Icons.inventory_2_outlined,
+      lucideIcon: 'package',
       label: available || _currentModelLabel.isNotEmpty
           ? modelLabel
           : '模型',
-      prefixLabel: width >= _composer2xl ? prefix : null,
+      prefixLabel: composerWidth >= _composer2xl ? prefix : null,
       enabled: available,
-      iconOnly: width < _composerSm,
-      showIcon: width < _composerSm,
+      iconOnly: composerWidth < _composerSm,
+      showIcon: composerWidth < _composerSm,
       tooltip: '选择模型',
       menuBuilder: (context, close) => ComposerModelMenuBody(
         options: option!.options,
@@ -1653,14 +1656,13 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  Widget _buildThoughtChip() {
+  Widget _buildThoughtChip(double composerWidth) {
     final entries = _thoughtMenuEntries();
     // 官方思考 chip（VI）：<384px 只有 brain 图标（size-7 方形）；
     // 384–576px 图标+绿色竖条（填充高度=档位进度）；≥576px 图标+文本
     // 标签（竖条隐藏）。tooltip：标签不可见时「思考级别」，可见时为
     // 档位文本（官方 N = labelVisible ? label : tooltip 键）。
-    final width = MediaQuery.sizeOf(context).width;
-    final iconOnly = width < _composerSm;
+    final iconOnly = composerWidth < _composerSm;
     final values = <String>[
       for (final o in _thoughtOption?.options ?? const <ConfigOptionValue>[])
         o.value,
@@ -1669,13 +1671,16 @@ class _ChatPageState extends State<ChatPage> {
     ];
     return ComposerChip(
       icon: Icons.psychology_outlined,
+      lucideIcon: 'brain',
       label: _currentThoughtLabel,
       enabled: entries.isNotEmpty,
       iconOnly: iconOnly,
-      barFill: !iconOnly && width < _composerXl && values.isNotEmpty
-              ? thoughtBarFill(values, _currentThoughtValue)
-              : null,
-      tooltip: width >= _composerXl
+      barFill: !iconOnly &&
+              composerWidth < _composerXl &&
+              values.isNotEmpty
+          ? thoughtBarFill(values, _currentThoughtValue)
+          : null,
+      tooltip: composerWidth >= _composerXl
           ? _currentThoughtLabel
           : '思考级别',
       menuBuilder: (context, close) => Column(
@@ -1865,8 +1870,8 @@ class _ChatPageState extends State<ChatPage> {
               animation: state,
               builder: (context, _) => state.isRunning
                   ? IconButton(
-                      icon: const Icon(Icons.stop_circle_outlined,
-                          color: ZColors.danger),
+                      icon: LucideIcon('circle-stop',
+                          size: 20, color: ZColors.danger),
                       tooltip: '停止',
                       onPressed: () =>
                           _run('停止失败', () => _transport.stop(_sessionId!)),
@@ -1878,24 +1883,6 @@ class _ChatPageState extends State<ChatPage> {
               icon: const Icon(Icons.quickreply_outlined, size: 20),
               tooltip: '辅助对话',
               onPressed: _openSideChat,
-            ),
-          if (state != null)
-            PopupMenuButton<String>(
-              onSelected: (action) {
-                switch (action) {
-                  case 'compact':
-                    _run('压缩失败', () => _transport.compact(_sessionId!));
-                  case 'usage':
-                    _showUsageSheet();
-                  case 'plans':
-                    _showPlansSheet();
-                }
-              },
-              itemBuilder: (context) => const [
-                PopupMenuItem(value: 'compact', child: Text('压缩上下文 (compact)')),
-                PopupMenuItem(value: 'usage', child: Text('用量统计')),
-                PopupMenuItem(value: 'plans', child: Text('计划')),
-              ],
             ),
         ],
       ),
@@ -2138,9 +2125,9 @@ class _ChatPageState extends State<ChatPage> {
             onAttach: _pickFiles,
             onSkills: _openSkillsPicker,
             onVoice: _toggleVoiceInput,
-            modeChip: _buildModeChip(),
-            modelChip: _buildModelChip(),
-            thoughtChip: _buildThoughtChip(),
+            modeChip: _buildModeChip,
+            modelChip: _buildModelChip,
+            thoughtChip: _buildThoughtChip,
             usageRing: _buildUsageRing(),
           ),
         ],
@@ -2666,15 +2653,7 @@ class _RowWidget extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (kind == 'userInput')
-              ListTile(
-                leading: const Icon(Icons.edit_outlined, size: 20),
-                title: const Text('编辑并重发'),
-                onTap: () {
-                  Navigator.pop(context);
-                  _editQuery(context);
-                },
-              ),
+            // 编辑入口在气泡下的操作行（气泡内原地编辑），长按菜单不再重复。
             ListTile(
               leading: const Icon(Icons.copy_outlined, size: 20),
               title: const Text('复制'),
@@ -2723,33 +2702,6 @@ class _RowWidget extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  Future<void> _editQuery(BuildContext context) async {
-    final controller =
-        TextEditingController(text: row['text'] as String? ?? '');
-    final text = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('编辑消息'),
-        content: TextField(
-          controller: controller,
-          maxLines: 5,
-          decoration: const InputDecoration(border: OutlineInputBorder()),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context), child: const Text('取消')),
-          FilledButton(
-              onPressed: () => Navigator.pop(context, controller.text.trim()),
-              child: const Text('重发')),
-        ],
-      ),
-    );
-    controller.dispose();
-    if (text == null || text.isEmpty) return;
-    await onAction(
-        '编辑失败', () => transport.editUserQuery(sessionId, _target, text));
   }
 
   Future<void> _confirmRewind(BuildContext context) async {
@@ -2827,7 +2779,7 @@ class _RowWidget extends StatelessWidget {
   }
 }
 
-class _UserBubble extends StatelessWidget {
+class _UserBubble extends StatefulWidget {
   final Map<String, dynamic> row;
   final ConversationTransport transport;
   final String sessionId;
@@ -2843,9 +2795,64 @@ class _UserBubble extends StatelessWidget {
   });
 
   @override
+  State<_UserBubble> createState() => _UserBubbleState();
+}
+
+class _UserBubbleState extends State<_UserBubble> {
+  bool _editing = false;
+  TextEditingController? _editController;
+  bool _sending = false;
+
+  bool get _canEdit =>
+      widget.badge == null &&
+      widget.sessionId.isNotEmpty &&
+      widget.row['rowId'] != null;
+
+  void _startEdit() {
+    _editController?.dispose();
+    _editController =
+        TextEditingController(text: widget.row['text'] as String? ?? '');
+    setState(() => _editing = true);
+  }
+
+  Future<void> _confirmEdit() async {
+    final text = _editController?.text.trim() ?? '';
+    if (text.isEmpty || _sending) return;
+    setState(() => _sending = true);
+    try {
+      await widget.transport.editUserQuery(
+        widget.sessionId,
+        {
+          'rowId': widget.row['rowId'],
+          if (widget.row['entityId'] != null) 'entityId': widget.row['entityId'],
+        },
+        text,
+      );
+      if (mounted) setState(() => _editing = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            duration: Duration(seconds: 1), content: Text('已重发')));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('编辑失败，请重试')));
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _editController?.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final text = row['text'] as String? ?? '';
-    final attachments = row['attachments'];
+    final text = widget.row['text'] as String? ?? '';
+    final attachments = widget.row['attachments'];
     return Align(
       alignment: Alignment.centerRight,
       child: Column(
@@ -2854,8 +2861,9 @@ class _UserBubble extends StatelessWidget {
           Container(
             // Official user bubble (`data-v4-user-input-bubble`): 12px radius
             // with a 2px top-right corner, surface fill + 10% hairline, 16/12
-            // padding, max-w-xl (576px).
+            // padding, max-w-xl (576px). 编辑态在气泡内原地展开为多行输入框。
             constraints: const BoxConstraints(maxWidth: 576),
+            width: _editing ? double.infinity : null,
             margin: const EdgeInsets.only(left: 56, top: 4, bottom: 4),
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: BoxDecoration(
@@ -2871,47 +2879,97 @@ class _UserBubble extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                if (attachments is List)
+                if (attachments is List && !_editing)
                   for (final a in attachments)
                     if (a is Map)
                       _AttachmentView(
                         attachment: a.cast<String, dynamic>(),
-                        transport: transport,
-                        sessionId: sessionId,
+                        transport: widget.transport,
+                        sessionId: widget.sessionId,
                       ),
-                if (text.isNotEmpty)
-                  SelectableText(text,
-                      style: TextStyle(
-                          fontSize: 14,
-                          height: 1.5,
-                          color: ZInk.solid(context))),
-                if (badge != null)
+                if (_editing) ...[
+                  TextField(
+                    controller: _editController,
+                    minLines: 2,
+                    maxLines: 8,
+                    autofocus: true,
+                    style: TextStyle(
+                        fontSize: 14,
+                        height: 1.5,
+                        color: ZInk.solid(context)),
+                    decoration: const InputDecoration(
+                      filled: false,
+                      border: InputBorder.none,
+                      isDense: true,
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
                   Row(
-                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.end,
                     children: [
-                      Text(badge!,
-                          style: TextStyle(
-                              fontSize: 10, color: ZInk.faint(context))),
-                      if (onRetry != null)
-                        TextButton(
-                          onPressed: onRetry,
-                          style: TextButton.styleFrom(
-                              padding: const EdgeInsets.only(left: 4),
-                              minimumSize: Size.zero,
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-                          child:
-                              const Text('重试', style: TextStyle(fontSize: 10)),
-                        ),
+                      TextButton(
+                        onPressed: _sending
+                            ? null
+                            : () => setState(() => _editing = false),
+                        style: TextButton.styleFrom(
+                            visualDensity: VisualDensity.compact,
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                        child: const Text('取消',
+                            style: TextStyle(fontSize: 12)),
+                      ),
+                      const SizedBox(width: 6),
+                      FilledButton(
+                        onPressed: _sending ? null : _confirmEdit,
+                        style: FilledButton.styleFrom(
+                            visualDensity: VisualDensity.compact,
+                            minimumSize: Size.zero,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 6),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                        child: const Text('重新发送',
+                            style: TextStyle(fontSize: 12)),
+                      ),
                     ],
                   ),
+                ] else ...[
+                  if (text.isNotEmpty)
+                    SelectableText(text,
+                        style: TextStyle(
+                            fontSize: 14,
+                            height: 1.5,
+                            color: ZInk.solid(context))),
+                  if (widget.badge != null)
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(widget.badge!,
+                            style: TextStyle(
+                                fontSize: 10, color: ZInk.faint(context))),
+                        if (widget.onRetry != null)
+                          TextButton(
+                            onPressed: widget.onRetry,
+                            style: TextButton.styleFrom(
+                                padding: const EdgeInsets.only(left: 4),
+                                minimumSize: Size.zero,
+                                tapTargetSize:
+                                    MaterialTapTargetSize.shrinkWrap),
+                            child: const Text('重试',
+                                style: TextStyle(fontSize: 10)),
+                          ),
+                      ],
+                    ),
+                ],
               ],
             ),
           ),
           // 官方用户消息的操作行（编辑/复制/分叉），气泡下右对齐。
           _UserActionRow(
-            row: row,
-            transport: transport,
-            sessionId: sessionId,
+            row: widget.row,
+            transport: widget.transport,
+            sessionId: widget.sessionId,
+            onEdit: _canEdit && !_editing ? _startEdit : null,
           ),
         ],
       ),
@@ -2920,59 +2978,29 @@ class _UserBubble extends StatelessWidget {
 }
 
 /// Small action row under the user bubble: edit & resend / copy / fork —
-/// the explicit counterpart of the official hover actions.
+/// the explicit counterpart of the official hover actions. Editing happens
+/// INLINE inside the bubble ([_UserBubble] owns the editing state), not in
+/// a dialog.
 class _UserActionRow extends StatelessWidget {
   final Map<String, dynamic> row;
   final ConversationTransport transport;
   final String sessionId;
 
+  /// Opens the bubble's in-place editor; null hides the edit button
+  /// (rows without a server rowId / echo messages can't be edited).
+  final VoidCallback? onEdit;
+
   const _UserActionRow({
     required this.row,
     required this.transport,
     required this.sessionId,
+    this.onEdit,
   });
 
   Map<String, dynamic> get _target => {
         'rowId': row['rowId'],
         if (row['entityId'] != null) 'entityId': row['entityId'],
       };
-
-  Future<void> _editAndResend(BuildContext context) async {
-    final controller =
-        TextEditingController(text: row['text'] as String? ?? '');
-    final text = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('编辑并重发'),
-        content: TextField(
-          controller: controller,
-          maxLines: 5,
-          decoration: const InputDecoration(border: OutlineInputBorder()),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context), child: const Text('取消')),
-          FilledButton(
-              onPressed: () => Navigator.pop(context, controller.text.trim()),
-              child: const Text('重发')),
-        ],
-      ),
-    );
-    controller.dispose();
-    if (text == null || text.isEmpty || sessionId.isEmpty) return;
-    try {
-      await transport.editUserQuery(sessionId, _target, text);
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(duration: Duration(seconds: 1), content: Text('已重发')));
-      }
-    } catch (_) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('编辑失败，请重试')));
-      }
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -2981,17 +3009,18 @@ class _UserActionRow extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            constraints:
-                const BoxConstraints(minWidth: 30, minHeight: 26),
-            padding: EdgeInsets.zero,
-            iconSize: 14,
-            color: ZInk.faint(context),
-            tooltip: '编辑并重发',
-            icon: const Icon(Icons.edit_outlined),
-            onPressed: () => _editAndResend(context),
-          ),
+          if (onEdit != null)
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              constraints:
+                  const BoxConstraints(minWidth: 30, minHeight: 26),
+              padding: EdgeInsets.zero,
+              iconSize: 14,
+              color: ZInk.faint(context),
+              tooltip: '编辑',
+              icon: const Icon(Icons.edit_outlined),
+              onPressed: onEdit,
+            ),
           IconButton(
             visualDensity: VisualDensity.compact,
             constraints:
@@ -4369,13 +4398,28 @@ class _GoalBanner extends StatelessWidget {
 
   const _GoalBanner({required this.state});
 
+  /// 目标横幅展示时机（对齐官方 goal 语义）：目标进行中/校验中/已暂停
+  /// 才展示；协议终态（completedSuccess / completedIncomplete /
+  /// cancelled 等）不再常驻——结果由时间线的 goalVerify 标记记录。
+  static (bool, String?) _statusText(String status) {
+    final s = status.toLowerCase();
+    if (s.isEmpty) return (true, null);
+    if (s.contains('complete') || s.contains('cancel') || s.contains('fail') || s.contains('error')) {
+      return (false, null);
+    }
+    if (s.contains('check') || s.contains('verif')) return (true, '目标校验中');
+    if (s.contains('pause') || s.contains('hold')) return (true, '已暂停');
+    return (true, null);
+  }
+
   @override
   Widget build(BuildContext context) {
     final goal = state.goal;
     if (goal == null) return const SizedBox.shrink();
     final objective = '${goal['objective'] ?? ''}';
     if (objective.isEmpty) return const SizedBox.shrink();
-    final status = '${goal['status'] ?? ''}';
+    final (show, statusText) = _statusText('${goal['status'] ?? ''}');
+    if (!show) return const SizedBox.shrink();
     return Container(
       margin: const EdgeInsets.fromLTRB(14, 4, 14, 0),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -4388,6 +4432,12 @@ class _GoalBanner extends StatelessWidget {
         children: [
           const Icon(Icons.flag_outlined, size: 14, color: ZColors.success),
           const SizedBox(width: 8),
+          Text('目标',
+              style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: ZColors.success)),
+          const SizedBox(width: 8),
           Expanded(
             child: Text(
               objective,
@@ -4396,8 +4446,8 @@ class _GoalBanner extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          if (status.isNotEmpty)
-            Text(status,
+          if (statusText != null)
+            Text(statusText,
                 style: const TextStyle(fontSize: 11, color: ZColors.success)),
         ],
       ),
@@ -4612,9 +4662,10 @@ class _StatusSummaryOverlayState extends State<_StatusSummaryOverlay> {
       ],
     );
 
+    Widget child;
     if (!_expanded) {
       // mini 胶囊：官方 max-h-8.5（34px）。
-      return Material(
+      child = Material(
         color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(17),
@@ -4665,7 +4716,7 @@ class _StatusSummaryOverlayState extends State<_StatusSummaryOverlay> {
     final size = MediaQuery.sizeOf(context);
     final done = steps?.where((s) => s.completed).length ?? 0;
     final fileSummary = summarizeFileChanges(_fileData);
-    return Material(
+    child = Material(
       color: Colors.transparent,
       child: Container(
         width: math.min(320, size.width - 24),
@@ -4787,6 +4838,23 @@ class _StatusSummaryOverlayState extends State<_StatusSummaryOverlay> {
             ),
           ],
         ),
+      ),
+    );
+
+    // 胶囊↔面板切换过渡（官方 transition 300ms；Flutter 侧用
+    // 180ms 右上角原点的缩放+淡入，避免形态硬切）。
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 180),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeIn,
+      transitionBuilder: (anim, animation) => ScaleTransition(
+        scale: Tween<double>(begin: 0.9, end: 1.0).animate(animation),
+        alignment: Alignment.topRight,
+        child: FadeTransition(opacity: animation, child: anim),
+      ),
+      child: KeyedSubtree(
+        key: ValueKey<bool>(_expanded),
+        child: child,
       ),
     );
   }
@@ -6158,9 +6226,13 @@ class _InputBar extends StatefulWidget {
   /// Inline config dropdowns built by [_ChatPageState] (official-web style:
   /// mode / model / thought live INSIDE the composer toolbar). The usage
   /// ring sits left of the model chip like the official chat toolbar.
-  final Widget modeChip;
-  final Widget modelChip;
-  final Widget thoughtChip;
+  /// Chips are built with the TOOLBAR's measured width — the official
+  /// breakpoints are container queries on the composer, not viewport
+  /// queries, so a tablet master-detail chat pane uses narrow forms even
+  /// though the screen is wide.
+  final Widget Function(double composerWidth) modeChip;
+  final Widget Function(double composerWidth) modelChip;
+  final Widget Function(double composerWidth) thoughtChip;
   final Widget usageRing;
 
   const _InputBar({
@@ -6239,7 +6311,7 @@ class _InputBarState extends State<_InputBar> {
                               widget.voiceRecording
                                   ? Icons.stop_circle
                                   : Icons.mic,
-                              size: 20,
+                              size: 16,
                               color: widget.voiceRecording
                                   ? ZColors.danger
                                   : ZInk.muted(context),
@@ -6251,30 +6323,37 @@ class _InputBarState extends State<_InputBar> {
                     ),
                 ],
               ),
-              Row(
-                children: [
-                  IconButton(
-                    visualDensity: VisualDensity.compact,
-                    icon: Icon(Icons.add,
-                        size: 20, color: ZInk.muted(context)),
-                    tooltip: '更多操作',
-                    onPressed:
-                        widget.sending ? null : () => _showActions(context),
-                  ),
-                  const SizedBox(width: 2),
-                  widget.modeChip,
-                  const Spacer(),
-                  widget.usageRing,
-                  const SizedBox(width: 6),
-                  widget.modelChip,
-                  const SizedBox(width: 6),
-                  widget.thoughtChip,
-                  const SizedBox(width: 4),
-                  _SendButton(
-                    sending: widget.sending,
-                    onSend: widget.onSend,
-                  ),
-                ],
+              // 断点数据源 = 工具条实际约束宽（官方 @container
+              // composer/inline-size 的等价物），而不是视口宽。
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final w = constraints.maxWidth;
+                  return Row(
+                    children: [
+                      IconButton(
+                        visualDensity: VisualDensity.compact,
+                        icon: LucideIcon('plus',
+                            size: 16, color: ZInk.muted(context)),
+                        tooltip: '更多操作',
+                        onPressed:
+                            widget.sending ? null : () => _showActions(context),
+                      ),
+                      const SizedBox(width: 2),
+                      widget.modeChip(w),
+                      const Spacer(),
+                      widget.usageRing,
+                      const SizedBox(width: 6),
+                      widget.modelChip(w),
+                      const SizedBox(width: 6),
+                      widget.thoughtChip(w),
+                      const SizedBox(width: 4),
+                      _SendButton(
+                        sending: widget.sending,
+                        onSend: widget.onSend,
+                      ),
+                    ],
+                  );
+                },
               ),
             ],
           ),
@@ -6361,8 +6440,8 @@ class _SendButton extends StatelessWidget {
                             : Colors.white,
                       ),
                     )
-                  : Icon(Icons.arrow_upward,
-                      size: 18,
+                  : LucideIcon('arrow-up',
+                      size: 16,
                       color: ZInk.solid(context) == Colors.white
                           ? Colors.black
                           : Colors.white),

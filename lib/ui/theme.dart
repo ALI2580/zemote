@@ -37,10 +37,21 @@ class ThemeController extends ChangeNotifier {
 class ZColors {
   static const primary = Color(0xFF3B82F6);
   static const primaryDim = Color(0xFF2563EB);
-  static const darkBg = Color(0xFF0B1220);
-  static const darkSurface = Color(0xFF111A2E);
-  static const darkCard = Color(0xFF16203A);
-  static const darkBorder = Color(0x1FFFFFFF);
+
+  // ---- Official web palette (theme-zai-dark / theme-zai-light CSS
+  // variables, extracted from the remote v4 bundle 2026-09-07):
+  //   dark  background #161616 · header/panel/sidebar #202020 ·
+  //         card/popover/input #2B2B2B · border #FFFFFF1A ·
+  //         border-hover #FFFFFF26 · hover/surface #FFFFFF0D · text #DEDEDE
+  //   light background #F8F8F8 · chrome white · border #0D0D0D1A ·
+  //         text #3A3A3A
+  static const darkBg = Color(0xFF161616);
+  static const darkSurface = Color(0xFF202020);
+  static const darkCard = Color(0xFF2B2B2B);
+  static const darkBorder = Color(0x1AFFFFFF);
+  static const darkBorderHover = Color(0x26FFFFFF);
+  static const darkHover = Color(0x0DFFFFFF);
+
   static const success = Color(0xFF22C55E);
   static const warning = Color(0xFFF59E0B);
   static const danger = Color(0xFFEF4444);
@@ -59,9 +70,6 @@ class ZColors {
   /// Sidebar surface (official web `--color-sidebar`: #202020 on dark;
   /// the light theme stays white like the rest of the chrome).
   static const sidebarDark = Color(0xFF202020);
-
-  // ---- Conversation-page constants translated from the official web CSS
-  // variables (theme-zai-dark / theme-zai-light tokens in the bundle CSS).
 
   /// `--color-surface`: dark white@5%, light black@4% — user bubble and
   /// reasoning tile fill.
@@ -92,10 +100,10 @@ class ZColors {
   static const confirmForegroundDark = Color(0xFF87D9A4);
   static const confirmForegroundLight = Color(0xFF166B32);
 
-  static const lightBg = Color(0xFFF6F8FC);
+  static const lightBg = Color(0xFFF8F8F8);
   static const lightSurface = Color(0xFFFFFFFF);
   static const lightCard = Color(0xFFFFFFFF);
-  static const lightBorder = Color(0x14000000);
+  static const lightBorder = Color(0x1A0D0D0D);
 }
 
 /// Theme-aware ink colors. Replaces hardcoded `Colors.white*` (dark-theme
@@ -106,61 +114,74 @@ class ZInk {
   static bool _isLight(BuildContext context) =>
       Theme.of(context).brightness == Brightness.light;
 
-  static const _slate = Color(0xFF0F172A);
-  static const _slate700 = Color(0xFF334155);
-  static const _slate600 = Color(0xFF475569);
-  static const _slate500 = Color(0xFF64748B);
-  static const _slate300 = Color(0xFFCBD5E1);
+  // Neutral (blue-free) ink ramps matching the official palette:
+  // dark text #DEDEDE with alpha steps, light #262626 ramp.
+  static const _inkDark = Color(0xFFDEDEDE);
+  static const _inkLight = Color(0xFF262626);
+  static const _inkLight700 = Color(0xFF404040);
+  static const _inkLight600 = Color(0xFF595959);
+  static const _inkLight500 = Color(0xFF8C8C8C);
+  static const _inkLight300 = Color(0xFFD9D9D9);
 
-  /// Primary text/ink (dark: `Colors.white`, light: slate-900).
+  /// Primary text/ink (dark: #DEDEDE, light: #262626).
   static Color solid(BuildContext context) =>
-      _isLight(context) ? _slate : Colors.white;
+      _isLight(context) ? _inkLight : _inkDark;
 
-  /// Secondary ink (dark: `Colors.white70`, light: slate-700).
-  static Color soft(BuildContext context) =>
-      _isLight(context) ? _slate700 : Colors.white70;
+  /// Secondary ink (dark: #DEDEDE@70%, light: #404040).
+  static Color soft(BuildContext context) => _isLight(context)
+      ? _inkLight700
+      : const Color(0xB3DEDEDE);
 
-  /// Muted ink (dark: `Colors.white54`, light: slate-600).
-  static Color muted(BuildContext context) =>
-      _isLight(context) ? _slate600 : Colors.white54;
+  /// Muted ink (dark: #DEDEDE@54%, light: #595959).
+  static Color muted(BuildContext context) => _isLight(context)
+      ? _inkLight600
+      : const Color(0x8ADEDEDE);
 
-  /// Faint ink (dark: `Colors.white38`, light: slate-500).
-  static Color faint(BuildContext context) =>
-      _isLight(context) ? _slate500 : const Color(0xFFB6C2D3);
+  /// Faint ink (dark: #DEDEDE@38%, light: #8C8C8C).
+  static Color faint(BuildContext context) => _isLight(context)
+      ? _inkLight500
+      : const Color(0x61DEDEDE);
 
-  /// Ghost ink (dark: `Colors.white24`, light: slate-400).
-  static Color ghost(BuildContext context) =>
-      _isLight(context) ? _slate500 : const Color(0xFF8FA1B8);
+  /// Ghost ink (dark: #DEDEDE@28%, light: #8C8C8C).
+  static Color ghost(BuildContext context) => _isLight(context)
+      ? _inkLight500
+      : const Color(0x47DEDEDE);
 
-  /// Hairline ink (dark: `Colors.white12`, light: slate-300).
-  static Color hairline(BuildContext context) =>
-      _isLight(context) ? _slate300 : Colors.white12;
+  /// Hairline ink (dark: white12, light: #D9D9D9).
+  static Color hairline(BuildContext context) => _isLight(context)
+      ? _inkLight300
+      : const Color(0x1FFFFFFF);
 
-  /// Subtle tile fill (dark: white@4%, light: black@4%).
+  /// Subtle tile fill (official hover/surface 5%: dark white@5%, light
+  /// black@5%).
   static Color tile(BuildContext context) => _isLight(context)
-      ? const Color(0x0A0F172A)
-      : Colors.white.withValues(alpha: 0.04);
+      ? const Color(0x0D000000)
+      : ZColors.darkHover;
 
   /// Tile hairline border (dark: white@6%, light: black@6%).
   static Color tileBorder(BuildContext context) => _isLight(context)
-      ? const Color(0x0F0F172A)
+      ? const Color(0x0F000000)
       : Colors.white.withValues(alpha: 0.06);
 
-  /// High-contrast panel fill for reasoning/tool cards.
-  static Color panel(BuildContext context) =>
-      _isLight(context) ? const Color(0xFFE8EEF8) : const Color(0xFF17233D);
+  /// Popover/card fill (official `--color-popover`: dark #2B2B2B, light
+  /// white) — menu cards, status panel, dropdowns.
+  static Color panel(BuildContext context) => _isLight(context)
+      ? Colors.white
+      : ZColors.darkCard;
 
-  /// Visible panel outline in both themes.
-  static Color panelBorder(BuildContext context) =>
-      _isLight(context) ? const Color(0xFFB8C7DD) : const Color(0xFF344563);
+  /// Popover outline (official 10% border token).
+  static Color panelBorder(BuildContext context) => _isLight(context)
+      ? ZColors.messageBorderLight
+      : ZColors.messageBorderDark;
 
   /// Sidebar surface (official `--color-sidebar` token).
   static Color sidebar(BuildContext context) =>
       _isLight(context) ? Colors.white : ZColors.sidebarDark;
 
   /// Reasoning-specific fill, visually distinct from tool output.
-  static Color reasoningPanel(BuildContext context) =>
-      _isLight(context) ? const Color(0xFFE9F2FF) : const Color(0xFF132A46);
+  static Color reasoningPanel(BuildContext context) => _isLight(context)
+      ? const Color(0xFFF5F5F5)
+      : const Color(0xFF242424);
 
   /// Official message-surface fill (`--color-surface` token).
   static Color messageSurface(BuildContext context) => _isLight(context)
@@ -190,21 +211,24 @@ class ZInk {
       ? ZColors.confirmForegroundLight
       : ZColors.confirmForegroundDark;
 
-  static Color reasoningBorder(BuildContext context) =>
-      _isLight(context) ? const Color(0xFF9DBCE2) : const Color(0xFF315A82);
+  static Color reasoningBorder(BuildContext context) => _isLight(context)
+      ? const Color(0xFFE5E5E5)
+      : ZColors.darkBorderHover;
 
-  /// Code block background (light: slate-100 so code stays readable).
-  static Color codeBlockBg(BuildContext context) =>
-      _isLight(context) ? const Color(0xFFF1F5F9) : const Color(0xFF0B1220);
+  /// Code block background (neutral: dark #1E1E1E, light #F0F0F0).
+  static Color codeBlockBg(BuildContext context) => _isLight(context)
+      ? const Color(0xFFF0F0F0)
+      : const Color(0xFF1E1E1E);
 
   /// Inline code background.
   static Color codeInlineBg(BuildContext context) => _isLight(context)
-      ? const Color(0x140F172A)
+      ? const Color(0x14000000)
       : Colors.white.withValues(alpha: 0.08);
 
-  /// Code text (light: dark blue for contrast on the light block).
-  static Color codeText(BuildContext context) =>
-      _isLight(context) ? const Color(0xFF1E3A8A) : const Color(0xFF93C5FD);
+  /// Code text (light: neutral dark; dark: soft sky accent).
+  static Color codeText(BuildContext context) => _isLight(context)
+      ? const Color(0xFF333333)
+      : const Color(0xFF93C5FD);
 }
 
 ThemeData buildDarkTheme() {
@@ -230,9 +254,9 @@ ThemeData buildDarkTheme() {
       titleTextStyle: TextStyle(
         fontSize: 17,
         fontWeight: FontWeight.w600,
-        color: Colors.white,
+        color: Color(0xFFDEDEDE),
       ),
-      iconTheme: IconThemeData(color: Colors.white70),
+      iconTheme: IconThemeData(color: Color(0xFFB3B3B3)),
     ),
     cardTheme: CardThemeData(
       color: ZColors.darkCard,
@@ -259,7 +283,7 @@ ThemeData buildDarkTheme() {
         borderRadius: BorderRadius.circular(12),
         borderSide: const BorderSide(color: ZColors.primary, width: 1.5),
       ),
-      hintStyle: const TextStyle(color: Colors.white60, fontSize: 14),
+      hintStyle: const TextStyle(color: Color(0xFF8C8C8C), fontSize: 14),
     ),
     dividerTheme: const DividerThemeData(
       color: ZColors.darkBorder,
@@ -269,7 +293,7 @@ ThemeData buildDarkTheme() {
     snackBarTheme: SnackBarThemeData(
       behavior: SnackBarBehavior.floating,
       backgroundColor: ZColors.darkCard,
-      contentTextStyle: const TextStyle(color: Colors.white),
+      contentTextStyle: const TextStyle(color: Color(0xFFDEDEDE)),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
     ),
     bottomSheetTheme: const BottomSheetThemeData(
@@ -284,7 +308,7 @@ ThemeData buildDarkTheme() {
     ),
     tabBarTheme: const TabBarThemeData(
       labelColor: ZColors.primary,
-      unselectedLabelColor: Colors.white60,
+      unselectedLabelColor: Color(0xFF8C8C8C),
       indicatorColor: ZColors.primary,
       dividerColor: ZColors.darkBorder,
       labelStyle: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
@@ -317,11 +341,11 @@ ThemeData buildDarkTheme() {
       ),
     ),
     textTheme: const TextTheme(
-      bodyMedium: TextStyle(color: Colors.white, fontSize: 14, height: 1.5),
-      bodySmall: TextStyle(color: Colors.white54, fontSize: 12, height: 1.4),
+      bodyMedium: TextStyle(color: Color(0xFFDEDEDE), fontSize: 14, height: 1.5),
+      bodySmall: TextStyle(color: Color(0xFF8C8C8C), fontSize: 12, height: 1.4),
       titleMedium: TextStyle(
-          color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600),
-      labelSmall: TextStyle(color: Colors.white60, fontSize: 11),
+          color: Color(0xFFDEDEDE), fontSize: 15, fontWeight: FontWeight.w600),
+      labelSmall: TextStyle(color: Color(0xFF8C8C8C), fontSize: 11),
     ),
   );
 }
@@ -348,9 +372,9 @@ ThemeData buildLightTheme() {
       titleTextStyle: TextStyle(
         fontSize: 17,
         fontWeight: FontWeight.w600,
-        color: Color(0xFF0F172A),
+        color: Color(0xFF262626),
       ),
-      iconTheme: IconThemeData(color: Color(0xFF475569)),
+      iconTheme: IconThemeData(color: Color(0xFF595959)),
     ),
     cardTheme: CardThemeData(
       color: ZColors.lightCard,
@@ -377,7 +401,7 @@ ThemeData buildLightTheme() {
         borderRadius: BorderRadius.circular(12),
         borderSide: const BorderSide(color: ZColors.primary, width: 1.5),
       ),
-      hintStyle: const TextStyle(color: Color(0xFF64748B), fontSize: 14),
+      hintStyle: const TextStyle(color: Color(0xFF737373), fontSize: 14),
     ),
     snackBarTheme: SnackBarThemeData(
       behavior: SnackBarBehavior.floating,
@@ -395,7 +419,7 @@ ThemeData buildLightTheme() {
     ),
     tabBarTheme: const TabBarThemeData(
       labelColor: ZColors.primaryDim,
-      unselectedLabelColor: Color(0xFF475569),
+      unselectedLabelColor: Color(0xFF595959),
       indicatorColor: ZColors.primaryDim,
       dividerColor: ZColors.lightBorder,
       labelStyle: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),

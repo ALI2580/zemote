@@ -300,7 +300,9 @@ composer 容器名 `composer/inline-size`，Tailwind v4 容器档位（**容器�
     `chat.toolbar.thoughtLevel.tooltip`「思考级别」。
   - value→i18n：HZe[RI(value)]（RI 归一化，UZe 同构）；单选项时无 popover
     （data-thought-level-fixed）。
-- **模式 chip**：<576px → size-7 纯图标；≥576px → 图标+文本。
+- **模式 chip（II 组件，lucide `sliders-horizontal` 图标）**：<576px → size-7
+  纯图标（size-7 justify-center gap-0 p-0，chevron hidden）；≥576px → 图标+文本
+  （w-fit gap-1 pl-2 pr-1.5）。
 - 工具条左右分组：左 = 附加/更多 + 模式 chip；右 = 用量环 + 模型 + 思考
   （+ 模式），`justify-end`。
 - **应用壳断点（非容器查询）**：mobile viewport =
@@ -328,3 +330,21 @@ tooltip「选择模型」；思考 chip 竖条改全高动画，tooltip 按官�
 - [x] ~~用量环 / 上下文明细 / 缓存命中率~~（2026-09-07 已解密，见「用量环形圈」节）。
 - [x] ~~辅助对话语义~~（2026-09-07 已解密，见「辅助对话」节）。
 - [x] ~~状态面板/summaryPanel（工作台对应物）~~（2026-09-07 已解密，见「状态面板」节）。
+
+### 2026-09-07 晚第四轮补充解密（He 反馈批）
+
+- **工具条图标字形**：模型 chip = lucide `package`（箱子）；思考 chip =
+  `brain`；模式 chip = `sliders-horizontal`；附加 = `paperclip`；更多 =
+  `ellipsis`；发送 = `arrow-up`；停止 = `circle-stop`；文件变更 =
+  `file-diff`；计划 = `list-todo`。已抓取 path 数据生成
+  lib/ui/official_icons.dart（LucideIcon CustomPaint 渲染：24 网格、stroke 2、
+  round cap/join；懒加载 chunk 格式 `var t=[[…]],n=e(`name`,t)`）。
+- **OF 触发按钮完整 class**：`w-fit justify-between gap-1 rounded-lg pl-2
+  pr-1.5 text-ui-base`；triggerIconClassName 调用点覆盖
+  `inline-flex @sm/composer:hidden`（**图标只在 <384 出现**）。
+- **goal 横幅语义**：i18n 键 chat.goalBanner.label「目标」、
+  chat.goalVerification.checking/complete/incomplete/cancelled =
+  目标校验中/目标已完成，任务结束/目标未完成，任务继续/目标校验已中断；
+  协议 goal 状态枚举含 completedSuccess（Zemote 曾把它原文渲染出来）。
+  终态不常驻横幅，结果走 goalVerify 时间线标记。
+- **用户消息编辑**：官方在原气泡内原地编辑（inline），无独立对话框。
