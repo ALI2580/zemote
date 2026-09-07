@@ -3459,7 +3459,7 @@ class _ReasoningTileState extends State<_ReasoningTile> {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.psychology_outlined,
+                  LucideIcon('brain',
                       size: 14,
                       color: widget.streaming
                           ? ZColors.running
@@ -3609,22 +3609,21 @@ class _ToolCallTileState extends State<_ToolCallTile> {
     'AskUserQuestion': '询问',
   };
 
-  /// Per-family icons like the official web client (terminal / magnifier /
-  /// pencil in the real rendering).
-  static const _kindIcons = {
-    'Read': Icons.search,
-    'Grep': Icons.search,
-    'WebSearch': Icons.travel_explore,
-    'WebFetch': Icons.language,
-    'Write': Icons.edit_outlined,
-    'Edit': Icons.edit_outlined,
-    'MultiEdit': Icons.edit_outlined,
-    'NotebookEdit': Icons.edit_outlined,
-    'Bash': Icons.terminal,
-    'Glob': Icons.folder_open,
-    'TodoWrite': Icons.checklist,
-    'Task': Icons.account_tree_outlined,
-    'AskUserQuestion': Icons.help_outline,
+  /// Per-family OFFICIAL lucide glyphs (terminal / magnifier / earth /
+  /// bot / list-todo / file-diff — all extracted from the official bundle).
+  static const _kindLucideIcons = {
+    'Read': 'search',
+    'Grep': 'search',
+    'Glob': 'search',
+    'WebSearch': 'earth',
+    'WebFetch': 'globe',
+    'Write': 'file-diff',
+    'Edit': 'file-diff',
+    'MultiEdit': 'file-diff',
+    'NotebookEdit': 'file-diff',
+    'Bash': 'terminal',
+    'TodoWrite': 'list-todo',
+    'Task': 'bot',
   };
 
   String get _kindLabel {
@@ -3726,7 +3725,7 @@ class _ToolCallTileState extends State<_ToolCallTile> {
     final primary = _primaryText;
     final (statusLabel, statusColor) = _statusLabel(context);
     final toolName = row['toolName'] as String? ?? '';
-    final kindIcon = _kindIcons[toolName] ?? Icons.build_outlined;
+    final kindIcon = Icons.build_outlined;
 
     // 编辑/写入行的 +/- 行数角标（官方 diffCount）。
     var added = 0, removed = 0;
@@ -3758,9 +3757,14 @@ class _ToolCallTileState extends State<_ToolCallTile> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(kindIcon,
-              size: 14,
-              color: running ? ZColors.running : ZInk.faint(context)),
+          if (_kindLucideIcons[toolName] != null)
+            LucideIcon(_kindLucideIcons[toolName]!,
+                size: 14,
+                color: running ? ZColors.running : ZInk.faint(context))
+          else
+            Icon(kindIcon,
+                size: 14,
+                color: running ? ZColors.running : ZInk.faint(context)),
           const SizedBox(width: 7),
           // 官方 running 时 kindLabel 用 animated-gradient-text。
           if (running)
@@ -4328,8 +4332,7 @@ class _SubagentTile extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
-          const Icon(Icons.smart_toy_outlined,
-              size: 13, color: ZColors.trajectoryAssistant),
+          const LucideIcon('bot', size: 13, color: ZColors.trajectoryAssistant),
           const SizedBox(width: 7),
           Expanded(
             child: Text(

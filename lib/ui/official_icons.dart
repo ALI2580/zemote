@@ -112,6 +112,38 @@ const Map<String, LucideIconData> kOfficialIcons = {
     LucideShape('p', ['M17 14V2']),
   ]),
 
+  "terminal": LucideIconData("terminal", [
+    LucideShape('p', ['M12 19h8']),
+    LucideShape('p', ['m4 17 6-6-6-6']),
+  ]),
+  "square-terminal": LucideIconData("square-terminal", [
+    LucideShape('p', ['m7 11 2-2-2-2']),
+    LucideShape('p', ['M11 13h4']),
+    LucideShape('r', ['3','3','18','18','2']),
+  ]),
+  "search": LucideIconData("search", [
+    LucideShape('p', ['m21 21-4.34-4.34']),
+    LucideShape('c', ['11','11','8','false']),
+  ]),
+  "earth": LucideIconData("earth", [
+    LucideShape('p', ['M21.54 15H17a2 2 0 0 0-2 2v4.54']),
+    LucideShape('p', ['M7 3.34V5a3 3 0 0 0 3 3a2 2 0 0 1 2 2c0 1.1.9 2 2 2a2 2 0 0 0 2-2c0-1.1.9-2 2-2h3.17']),
+    LucideShape('p', ['M11 21.95V18a2 2 0 0 0-2-2a2 2 0 0 1-2-2v-1a2 2 0 0 0-2-2H2.05']),
+    LucideShape('c', ['12','12','10','false']),
+  ]),
+  "globe": LucideIconData("globe", [
+    LucideShape('c', ['12','12','10','false']),
+    LucideShape('p', ['M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20']),
+    LucideShape('p', ['M2 12h20']),
+  ]),
+  "bot": LucideIconData("bot", [
+    LucideShape('p', ['M12 8V4H8']),
+    LucideShape('r', ['4','8','16','12','2']),
+    LucideShape('p', ['M2 14h2']),
+    LucideShape('p', ['M20 14h2']),
+    LucideShape('p', ['M15 13v2']),
+    LucideShape('p', ['M9 13v2']),
+  ]),
 };
 
 /// Renders an official lucide icon: 24x24 grid, stroke 2, round caps/joins,
