@@ -2148,11 +2148,6 @@ class _ChatPageState extends State<ChatPage> {
             onAttach: _pickFiles,
             onSkills: _openSkillsPicker,
             onVoice: _toggleVoiceInput,
-            onCompact: _sessionId == null
-                ? null
-                : () => _run('压缩失败', () => _transport.compact(_sessionId!)),
-            onUsage: _sessionId == null ? null : _showUsageSheet,
-            onPlans: _showPlansSheet,
             modeChip: _buildModeChip,
             modelChip: _buildModelChip,
             thoughtChip: _buildThoughtChip,
@@ -6175,9 +6170,6 @@ class _InputBar extends StatefulWidget {
   final VoidCallback onAttach;
   final VoidCallback onSkills;
   final VoidCallback onVoice;
-  final VoidCallback? onCompact;
-  final VoidCallback? onUsage;
-  final VoidCallback? onPlans;
 
   /// Inline config dropdowns built by [_ChatPageState] (official-web style:
   /// mode / model / thought live INSIDE the composer toolbar). The usage
@@ -6201,9 +6193,6 @@ class _InputBar extends StatefulWidget {
     required this.onAttach,
     required this.onSkills,
     required this.onVoice,
-    this.onCompact,
-    this.onUsage,
-    this.onPlans,
     required this.modeChip,
     required this.modelChip,
     required this.thoughtChip,
@@ -6321,6 +6310,24 @@ class _InputBarState extends State<_InputBar> {
     );
   }
 
+
+  /// 在光标处插入官方触发符（@ / /），前一位非空白时补一个空格，
+  /// 满足官方「行首或空白后触发」的规则；插入后由 controller 监听器
+  /// 唤起对应菜单。
+  void _insertTrigger(String trigger) {
+    final ctrl = widget.controller;
+    final text = ctrl.text;
+    var pos = ctrl.selection.baseOffset;
+    if (pos < 0 || pos > text.length) pos = text.length;
+    final needsSpace =
+        pos > 0 && text[pos - 1] != ' ' && text.codeUnitAt(pos - 1) != 10;
+    final inserted = (needsSpace ? ' ' : '') + trigger;
+    ctrl.value = TextEditingValue(
+      text: text.substring(0, pos) + inserted + text.substring(pos),
+      selection: TextSelection.collapsed(offset: pos + inserted.length),
+    );
+  }
+
   void _showActions(BuildContext context) {
     showModalBottomSheet<void>(
       context: context,
@@ -6335,64 +6342,40 @@ class _InputBarState extends State<_InputBar> {
               const Text('更多操作',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
               const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  _ActionItem(
-                    icon: Icons.attach_file,
-                    label: '上传文件',
-                    onTap: () {
-                      Navigator.pop(context);
-                      widget.onAttach();
-                    },
-                  ),
-                  _ActionItem(
-                    icon: Icons.auto_awesome_outlined,
-                    label: '选择 Skill',
-                    onTap: () {
-                      Navigator.pop(context);
-                      widget.onSkills();
-                    },
-                  ),
-                ],
+              // 官方加号菜单（He 官方截图对照）：仅 附件 / @ 上下文 /
+              // / 能力 / $ 技能 四项。
+              _ActionItem(
+                icon: Icons.attach_file,
+                label: '添加附件',
+                onTap: () {
+                  Navigator.pop(context);
+                  widget.onAttach();
+                },
               ),
-              if (widget.onCompact != null ||
-                  widget.onUsage != null ||
-                  widget.onPlans != null) ...[
-                const SizedBox(height: 12),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
-                  children: [
-                    if (widget.onCompact != null)
-                      _ActionItem(
-                        icon: Icons.compress,
-                        label: '压缩上下文',
-                        onTap: () {
-                          Navigator.pop(context);
-                          widget.onCompact!();
-                        },
-                      ),
-                    if (widget.onUsage != null)
-                      _ActionItem(
-                        icon: Icons.data_usage,
-                        label: '用量统计',
-                        onTap: () {
-                          Navigator.pop(context);
-                          widget.onUsage!();
-                        },
-                      ),
-                    if (widget.onPlans != null)
-                      _ActionItem(
-                        icon: Icons.account_tree_outlined,
-                        label: '计划明细',
-                        onTap: () {
-                          Navigator.pop(context);
-                          widget.onPlans!();
-                        },
-                      ),
-                  ],
-                ),
-              ],
+              _ActionItem(
+                icon: Icons.alternate_email,
+                label: '使用 @ 添加上下文',
+                onTap: () {
+                  Navigator.pop(context);
+                  _insertTrigger('@');
+                },
+              ),
+              _ActionItem(
+                icon: Icons.terminal,
+                label: '使用 / 选择能力',
+                onTap: () {
+                  Navigator.pop(context);
+                  _insertTrigger('/');
+                },
+              ),
+              _ActionItem(
+                icon: Icons.auto_awesome_outlined,
+                label: '使用 \$ 选择技能',
+                onTap: () {
+                  Navigator.pop(context);
+                  widget.onSkills();
+                },
+              ),
             ],
           ),
         ),
