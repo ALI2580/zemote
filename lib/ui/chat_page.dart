@@ -280,9 +280,8 @@ String _modeTitleOf(String value, String fallbackName) {
 }
 
 String? _modeSubtitleOf(String value, String? desktopDescription) {
-  if (desktopDescription != null && desktopDescription.isNotEmpty) {
-    return desktopDescription;
-  }
+  // 官方模式菜单无英文描述：丢弃桌面下发的英文 description，
+  // 只保留本地中文文案。
   return _modePresentation[value.trim().toLowerCase()]?.$3;
 }
 
@@ -427,6 +426,10 @@ String formatTurnDuration(int ms) {
 /// Official default-open rule for a turn's collapsible history:
 /// the latest turn stays open while running; a lone turn with no assistant
 /// text yet stays open; everything else defaults to collapsed.
+/// 折叠时保留的内容（官方语义）：收起的只是前置的思考/工具执行流程，
+/// 最后的总结正文不收起。
+bool turnKeepsFinalText({required bool expanded}) => !expanded;
+
 bool turnDefaultOpen({
   required bool isLastTurn,
   required bool running,
@@ -1483,6 +1486,7 @@ class _ChatPageState extends State<ChatPage> {
         return false;
       }
       onAccepted?.call();
+      if (mounted) setState(() {}); // 刷新 chip 标签/竖条（He 反馈：切换后文本不变）
       if (successMessage != null) _toast(successMessage);
       return true;
     } catch (e) {
@@ -1882,20 +1886,8 @@ class _ChatPageState extends State<ChatPage> {
           ],
         ),
         actions: [
-          if (state != null)
-            AnimatedBuilder(
-              animation: state,
-              builder: (context, _) => state.isRunning
-                  ? IconButton(
-                      icon: LucideIcon('circle-stop',
-                          size: 20, color: ZColors.danger),
-                      tooltip: '停止',
-                      onPressed: () =>
-                          _run('停止失败', () => _transport.stop(_sessionId!)),
-                    )
-                  : const SizedBox.shrink(),
-            ),
-          if (_sessionId != null)
+          // 辅助会话内不再提供辅助会话入口（避免递归）。
+          if (_sessionId != null && !widget.isSideChat)
             IconButton(
               icon: const Icon(Icons.quickreply_outlined, size: 20),
               tooltip: '辅助对话',
@@ -2050,13 +2042,6 @@ class _ChatPageState extends State<ChatPage> {
                 if (!widget.isSideChat && state != null)
                   Positioned(
                     top: 8,
-                    left: 24,
-                    right: 24,
-                    child: _ReconnectBanner(bridge: _transport.session),
-                  ),
-                if (!widget.isSideChat && state != null)
-                  Positioned(
-                    top: 8,
                     right: 12,
                     child: AnimatedBuilder(
                       animation: state,
@@ -2072,6 +2057,7 @@ class _ChatPageState extends State<ChatPage> {
               ],
             ),
           ),
+          _ReconnectBanner(bridge: _transport.session),
           if (state != null)
             AnimatedBuilder(
               animation: state,
@@ -2141,6 +2127,10 @@ class _ChatPageState extends State<ChatPage> {
           _InputBar(
             controller: _inputController,
             sending: _sending,
+            running: state?.isRunning ?? false,
+            onStop: _sessionId == null
+                ? null
+                : () => _run('停止失败', () => _transport.stop(_sessionId!)),
             voiceAvailable: _voiceAvailable,
             voiceRecording: _voiceRecording,
             voiceWorking: _voiceWorking,
@@ -2155,6 +2145,7 @@ class _ChatPageState extends State<ChatPage> {
             usageRing: widget.isSideChat
                 ? const SizedBox.shrink()
                 : _buildUsageRing(),
+            isSideChat: widget.isSideChat,
           ),
         ],
       ),
@@ -2368,13 +2359,29 @@ class _TurnGroupWidget extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: _assistantChildren(parts),
                     )
-                  : const SizedBox(width: double.infinity),
+                  // 官方语义：收起的只是前置思考/工具流程，最终总结保留。
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: _collapsedChildren(parts),
+                    ),
             ),
           ] else
             ..._assistantChildren(parts),
         ],
       ],
     );
+  }
+
+  /// 折叠态只渲染最后一段 assistant 总结正文。
+  List<Widget> _collapsedChildren(AssistantTurnParts parts) {
+    var lastTextIdx = -1;
+    for (var i = 0; i < parts.parts.length; i++) {
+      if (parts.parts[i].kind == 'text') lastTextIdx = i;
+    }
+    if (lastTextIdx < 0) return const [];
+    final all = _assistantChildren(parts);
+    if (lastTextIdx >= all.length) return const [];
+    return [all[lastTextIdx]];
   }
 
   List<Widget> _assistantChildren(AssistantTurnParts parts) {
@@ -2712,7 +2719,11 @@ class _RowWidget extends StatelessWidget {
           sessionId: sessionId,
           onAction: onAction),
       'subagent' => _SubagentTile(row: row),
-      'timelineMarker' => _TimelineMarkerWidget(row: row),
+      'timelineMarker' =>
+        // 辅助会话完全隔离：主会话的压缩等标记不带入。
+        sideChat
+            ? const SizedBox.shrink()
+            : _TimelineMarkerWidget(row: row),
       _ => const SizedBox.shrink(),
     };
     final kind = row['kind'];
@@ -2813,14 +2824,22 @@ class _UserBubbleState extends State<_UserBubble> {
             margin: const EdgeInsets.only(left: 56, top: 4, bottom: 4),
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: BoxDecoration(
-              color: ZInk.messageSurface(context),
+              // 编辑态用实底（官方无蓝色聚焦边），普通态保持 surface。
+              color: _editing
+                  ? (Theme.of(context).brightness == Brightness.light
+                      ? Colors.white
+                      : ZColors.composerDark)
+                  : ZInk.messageSurface(context),
               borderRadius: const BorderRadius.only(
                 topLeft: Radius.circular(12),
                 topRight: Radius.circular(2),
                 bottomLeft: Radius.circular(12),
                 bottomRight: Radius.circular(12),
               ),
-              border: Border.all(color: ZInk.messageBorder(context)),
+              border: Border.all(
+                  color: _editing
+                      ? ZInk.messageBorder(context)
+                      : ZInk.messageBorder(context)),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.end,
@@ -2943,11 +2962,6 @@ class _UserActionRow extends StatelessWidget {
     this.onEdit,
   });
 
-  Map<String, dynamic> get _target => {
-        'rowId': row['rowId'],
-        if (row['entityId'] != null) 'entityId': row['entityId'],
-      };
-
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -2982,36 +2996,6 @@ class _UserActionRow extends StatelessWidget {
               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                   duration: Duration(seconds: 1), content: Text('已复制')));
             },
-          ),
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            constraints:
-                const BoxConstraints(minWidth: 30, minHeight: 26),
-            padding: EdgeInsets.zero,
-            iconSize: 14,
-            color: ZInk.faint(context),
-            tooltip: '分叉',
-            icon: const Icon(Icons.fork_right),
-            onPressed: sessionId.isEmpty
-                ? null
-                : () {
-                    transport
-                        .forkAssistant(sessionId, _target)
-                        .then((_) {
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                                duration: Duration(seconds: 2),
-                                content: Text('已分叉，新会话在任务列表中')));
-                      }
-                    }).catchError((Object _) {
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                                content: Text('分叉失败，请重试')));
-                      }
-                    });
-                  },
           ),
         ],
       ),
@@ -4628,6 +4612,16 @@ class _StatusSummaryOverlayState extends State<_StatusSummaryOverlay> {
                         fontSize: 11.5, color: ZInk.solid(context)),
                   ),
                 ],
+                if (widget.state.goal != null &&
+                    '${widget.state.goal!['objective'] ?? ''}'.isNotEmpty) ...[
+                  if (hasPlan || hasWorks) const SizedBox(width: 10),
+                  Icon(Icons.flag_outlined,
+                      size: 12, color: ZColors.success),
+                  const SizedBox(width: 5),
+                  Text('目标',
+                      style: TextStyle(
+                          fontSize: 11.5, color: ZInk.solid(context))),
+                ],
                 if (hasPlan && hasWorks) const SizedBox(width: 10),
                 if (hasWorks) ...[
                   Icon(
@@ -4669,31 +4663,24 @@ class _StatusSummaryOverlayState extends State<_StatusSummaryOverlay> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 6, 4, 0),
-              child: Row(
-                children: [
-                  Text('状态',
-                      style: TextStyle(
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w600,
-                          color: ZInk.solid(context))),
-                  const Spacer(),
-                  IconButton(
-                    tooltip: '收起为胶囊',
-                    visualDensity: VisualDensity.compact,
-                    onPressed: () {
-                      // 收起后胶囊会出现在指尖下方（AnimatedSwitcher 旧面板
-                      // 淡出期间仍在原位），延迟切态避免同一手势的抬指落在
-                      // 胶囊上又立刻触发展开。
-                      Future.delayed(const Duration(milliseconds: 260), () {
-                        if (mounted) setState(() => _expanded = false);
-                      });
-                    },
-                    icon: Icon(Icons.unfold_less,
-                        size: 18, color: ZInk.muted(context)),
-                  ),
-                ],
+            // 整行可点收起（不依赖小图标命中）。
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => setState(() => _expanded = false),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+                child: Row(
+                  children: [
+                    Text('状态',
+                        style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                            color: ZInk.solid(context))),
+                    const Spacer(),
+                    Icon(Icons.close,
+                        size: 16, color: ZInk.muted(context)),
+                  ],
+                ),
               ),
             ),
             Flexible(
@@ -4789,22 +4776,7 @@ class _StatusSummaryOverlayState extends State<_StatusSummaryOverlay> {
       ),
     );
 
-    // 胶囊↔面板切换过渡（官方 transition 300ms；Flutter 侧用
-    // 180ms 右上角原点的缩放+淡入，避免形态硬切）。
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 180),
-      switchInCurve: Curves.easeOutCubic,
-      switchOutCurve: Curves.easeIn,
-      transitionBuilder: (anim, animation) => ScaleTransition(
-        scale: Tween<double>(begin: 0.9, end: 1.0).animate(animation),
-        alignment: Alignment.topRight,
-        child: FadeTransition(opacity: animation, child: anim),
-      ),
-      child: KeyedSubtree(
-        key: ValueKey<bool>(_expanded),
-        child: child,
-      ),
-    );
+    return child;
   }
 
   Widget _divider(BuildContext context) => Divider(
@@ -6166,6 +6138,8 @@ class _InputBar extends StatefulWidget {
   final bool voiceAvailable;
   final bool voiceRecording;
   final bool voiceWorking;
+  final bool running;
+  final VoidCallback? onStop;
   final VoidCallback onSend;
   final VoidCallback onAttach;
   final VoidCallback onSkills;
@@ -6183,9 +6157,14 @@ class _InputBar extends StatefulWidget {
   final Widget Function(double composerWidth) thoughtChip;
   final Widget usageRing;
 
+  /// 辅助会话完全隔离：不显示模式/模型/思考配置入口（切换会影响主会话）。
+  final bool isSideChat;
+
   const _InputBar({
     required this.controller,
     required this.sending,
+    required this.running,
+    this.onStop,
     required this.voiceAvailable,
     required this.voiceRecording,
     required this.voiceWorking,
@@ -6197,6 +6176,7 @@ class _InputBar extends StatefulWidget {
     required this.modelChip,
     required this.thoughtChip,
     required this.usageRing,
+    required this.isSideChat,
   });
 
   @override
@@ -6287,17 +6267,21 @@ class _InputBarState extends State<_InputBar> {
                             widget.sending ? null : () => _showActions(context),
                       ),
                       const SizedBox(width: 2),
-                      widget.modeChip(w),
+                      if (!widget.isSideChat) widget.modeChip(w),
                       const Spacer(),
                       widget.usageRing,
-                      const SizedBox(width: 6),
-                      widget.modelChip(w),
-                      const SizedBox(width: 6),
-                      widget.thoughtChip(w),
+                      if (!widget.isSideChat) ...[
+                        const SizedBox(width: 6),
+                        widget.modelChip(w),
+                        const SizedBox(width: 6),
+                        widget.thoughtChip(w),
+                      ],
                       const SizedBox(width: 4),
                       _SendButton(
                         sending: widget.sending,
+                        running: widget.running,
                         onSend: widget.onSend,
+                        onStop: widget.onStop,
                       ),
                     ],
                   );
@@ -6389,9 +6373,18 @@ class _InputBarState extends State<_InputBar> {
 /// white arrow), fading when disabled.
 class _SendButton extends StatelessWidget {
   final bool sending;
-  final VoidCallback onSend;
 
-  const _SendButton({required this.sending, required this.onSend});
+  /// 任务运行中：同款圆形按钮变为官方停止形态（内部实心方块）。
+  final bool running;
+  final VoidCallback onSend;
+  final VoidCallback? onStop;
+
+  const _SendButton({
+    required this.sending,
+    required this.onSend,
+    this.running = false,
+    this.onStop,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -6403,7 +6396,11 @@ class _SendButton extends StatelessWidget {
         shape: const CircleBorder(),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
-          onTap: sending ? null : onSend,
+          onTap: sending
+              ? null
+              : running
+                  ? onStop
+                  : onSend,
           child: SizedBox(
             width: 32,
             height: 32,
