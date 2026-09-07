@@ -1732,9 +1732,12 @@ class _ChatPageState extends State<ChatPage> {
       builder: (context, _) {
         final info = parseContextWindowInfo(state.usage);
         if (info == null) return const SizedBox.shrink();
-        return _ContextUsageRing(
-          ratio: info.ratio,
-          onTap: _showUsageSheet,
+        return CompositedTransformTarget(
+          link: _usageRingLink,
+          child: _ContextUsageRing(
+            ratio: info.ratio,
+            onTap: _toggleUsageOverlay,
+          ),
         );
       },
     );
@@ -1799,19 +1802,78 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  void _showUsageSheet() {
+  final LayerLink _usageRingLink = LayerLink();
+  OverlayEntry? _usageOverlay;
+
+  void _toggleUsageOverlay() {
+    if (_usageOverlay != null) {
+      _usageOverlay?.remove();
+      _usageOverlay = null;
+      return;
+    }
     final state = _state;
     final sessionId = _sessionId;
     if (state == null || sessionId == null) return;
-    showModalBottomSheet(
-      context: context,
-      builder: (context) => _UsageSheet(
-        state: state,
-        session: widget.session,
-        scope: widget.scope,
-        sessionId: sessionId,
+    // 官方为环上方悬浮 popover（非底部卡片）；贴右缘时右对齐防溢出。
+    final ringBox =
+        (_usageRingLink.leader) as RenderBox?;
+    final screenW = MediaQuery.sizeOf(context).width;
+    var right = false;
+    if (ringBox != null) {
+      final r = ringBox.localToGlobal(Offset.zero) & ringBox.size;
+      right = screenW - r.right < 340;
+    }
+    _usageOverlay = OverlayEntry(
+      builder: (context) => Stack(
+        children: [
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _toggleUsageOverlay,
+              child: const SizedBox.expand(),
+            ),
+          ),
+          CompositedTransformFollower(
+            link: _usageRingLink,
+            targetAnchor: right ? Alignment.topRight : Alignment.topLeft,
+            followerAnchor:
+                right ? Alignment.bottomRight : Alignment.bottomLeft,
+            offset: const Offset(0, -8),
+            showWhenUnlinked: false,
+            child: Material(
+              color: Colors.transparent,
+              child: Container(
+                width: math.min(320.0, screenW - 16),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).brightness == Brightness.light
+                      ? Colors.white
+                      : ZColors.darkCard,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: ZInk.messageBorder(context)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.18),
+                      blurRadius: 16,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: _UsageSheet(
+                    state: state,
+                    session: widget.session,
+                    scope: widget.scope,
+                    sessionId: sessionId,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
+    Overlay.of(context, rootOverlay: true).insert(_usageOverlay!);
   }
 
   Future<void> _showPlansSheet() async {
@@ -3152,6 +3214,7 @@ class _AssistantBubble extends StatelessWidget {
                 else ...[
                   _FeedbackButton(
                     icon: Icons.copy_outlined,
+                    lucideIcon: 'copy',
                     active: false,
                     onTap: () {
                       Clipboard.setData(ClipboardData(text: text));
@@ -3163,18 +3226,21 @@ class _AssistantBubble extends StatelessWidget {
                   ),
                   _FeedbackButton(
                     icon: Icons.thumb_up_alt_outlined,
+                    lucideIcon: 'thumbs-up',
                     active: feedback == 'like',
                     onTap: () =>
                         _setFeedback(feedback == 'like' ? null : 'like'),
                   ),
                   _FeedbackButton(
                     icon: Icons.thumb_down_alt_outlined,
+                    lucideIcon: 'thumbs-down',
                     active: feedback == 'dislike',
                     onTap: () =>
                         _setFeedback(feedback == 'dislike' ? null : 'dislike'),
                   ),
                   _FeedbackButton(
                     icon: Icons.fork_right,
+                    lucideIcon: 'split',
                     active: false,
                     onTap: () {
                       if (sessionId.isEmpty) return;
@@ -3209,20 +3275,27 @@ class _AssistantBubble extends StatelessWidget {
 
 class _FeedbackButton extends StatelessWidget {
   final IconData icon;
+
+  /// Official lucide glyph (takes precedence over [icon]).
+  final String? lucideIcon;
   final bool active;
   final VoidCallback onTap;
 
   const _FeedbackButton({
-    required this.icon,
-    required this.active,
+        required this.icon,
+    this.lucideIcon, required this.active,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     return IconButton(
-      icon: Icon(icon,
-          size: 15, color: active ? ZColors.primary : ZInk.ghost(context)),
+      icon: lucideIcon != null
+          ? LucideIcon(lucideIcon!,
+              size: 15, color: active ? ZColors.primary : ZInk.ghost(context))
+          : Icon(icon,
+              size: 15,
+              color: active ? ZColors.primary : ZInk.ghost(context)),
       onPressed: onTap,
       visualDensity: VisualDensity.compact,
     );
@@ -6326,41 +6399,45 @@ class _InputBarState extends State<_InputBar> {
               const Text('更多操作',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
               const SizedBox(height: 16),
-              // 官方加号菜单（He 官方截图对照）：仅 附件 / @ 上下文 /
-              // / 能力 / $ 技能 四项。
-              _ActionItem(
-                icon: Icons.attach_file,
-                label: '添加附件',
-                onTap: () {
-                  Navigator.pop(context);
-                  widget.onAttach();
-                },
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  // 官方加号菜单（He 官方截图对照）：附件 / @ 上下文 /
+                  // / 能力 / $ 技能 四项，横向依次排开。
+                  _ActionItem(
+                    icon: Icons.attach_file,
+                    label: '添加附件',
+                    onTap: () {
+                      Navigator.pop(context);
+                      widget.onAttach();
+                    },
+                  ),
+                  _ActionItem(
+                    icon: Icons.alternate_email,
+                    label: '使用 @ 添加上下文',
+                    onTap: () {
+                      Navigator.pop(context);
+                      _insertTrigger('@');
+                    },
+                  ),
+                  _ActionItem(
+                    icon: Icons.terminal,
+                    label: '使用 / 选择能力',
+                    onTap: () {
+                      Navigator.pop(context);
+                      _insertTrigger('/');
+                    },
+                  ),
+                  _ActionItem(
+                    icon: Icons.auto_awesome_outlined,
+                    label: '使用 \$ 选择技能',
+                    onTap: () {
+                      Navigator.pop(context);
+                      widget.onSkills();
+                    },
+                  ),
+                ],
               ),
-              _ActionItem(
-                icon: Icons.alternate_email,
-                label: '使用 @ 添加上下文',
-                onTap: () {
-                  Navigator.pop(context);
-                  _insertTrigger('@');
-                },
-              ),
-              _ActionItem(
-                icon: Icons.terminal,
-                label: '使用 / 选择能力',
-                onTap: () {
-                  Navigator.pop(context);
-                  _insertTrigger('/');
-                },
-              ),
-              _ActionItem(
-                icon: Icons.auto_awesome_outlined,
-                label: '使用 \$ 选择技能',
-                onTap: () {
-                  Navigator.pop(context);
-                  widget.onSkills();
-                },
-              ),
-            ],
           ),
         ),
       ),
