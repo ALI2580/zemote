@@ -13,6 +13,8 @@
 ## [0.6.8] - 2026-09-07
 
 ### Changed
+- **toast 移到顶部并主题适配**：「模型已切换 / 思考强度已切换」等提示从底部 SnackBar 改为视口顶部居中的浮动卡片（根 Overlay 自绘，SnackBar 无位置参数），180ms 淡入下滑入场、2.4s 后淡出；深色面板底/浅色白底 + hairline 边框 + 正文墨色，随主题切换。
+- **用量弹窗紧凑化**：卡内边距 20→14/12、标题 16→14（官方 text-ui-base）、明细与累计 token 行 12/13→11.5、行距 3/4→1.5、区块间距 10/12→6/8、色块 8→7 —— 对齐官方 w-80 卡的密度，整体高度显著收拢。
 - **Composer 工具栏完整复刻官方（2026-09-09 bundle 全量解密）**：行结构对齐 vRe——单行 `items-end`，左 leading（+ 入口/模式 chip）flex-1，右 trailing（用量环/模型/思考/发送）同行 gap-1(4px)，整行 28px 等高（官方 icon-md/h-7 体系）。
 - **“+”入口官方化**：plus 圆形按钮 + 底部弹层 → ellipsis 28px 幽灵按钮 + 锚定菜单（上方左对齐、208px、radix sideOffset=0），行式菜单项（paperclip/at-sign/square-slash/dollar-sign 官方字形 + 触发符 mono 小标签，tag 底深 #363636/浅 #e6e6e6）。
 - **发送按钮官方形**：32px 圆形 → 28px 圆角方形（icon-md `rounded-lg bg-brand`，brand=深#fff/浅#000 墨色）；修复箭头色按 `== Colors.white` 精确比较导致白箭头画在 #DEDEDE 底上不可见的问题（改亮度判定）。

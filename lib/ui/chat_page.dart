@@ -510,7 +510,8 @@ List<Map<String, dynamic>> removeEchoedTexts(
   }).toList();
 }
 
-class _ChatPageState extends State<ChatPage> {
+class _ChatPageState extends State<ChatPage>
+    with SingleTickerProviderStateMixin {
   late final ConversationTransport _transport;
   ConversationSubscription? _subscription;
   final _inputController = TextEditingController();
@@ -754,6 +755,9 @@ class _ChatPageState extends State<ChatPage> {
 
   @override
   void dispose() {
+    _toastTimer?.cancel();
+    _toastAnim?.dispose();
+    _toastEntry?.remove();
     _subscription?.dispose();
     _mentionSessionsSub?.dispose();
     VoiceModelEvents.changed.removeListener(_loadVoiceAvailability);
@@ -884,11 +888,81 @@ class _ChatPageState extends State<ChatPage> {
     Future<void>.delayed(const Duration(milliseconds: 300), jump);
   }
 
+  /// 顶部浮动 toast：官方网页端的提示出现在视口顶部，深浅主题各自
+  /// 适配（面板底色 + hairline + 正文墨色）。SnackBar 被固定在 Scaffold
+  /// 底部没有位置参数 —— 用根 Overlay 自绘（与 chips 菜单同一条路）。
+  OverlayEntry? _toastEntry;
+  Timer? _toastTimer;
+  AnimationController? _toastAnim;
+
   void _toast(String message) {
-    if (mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(message)));
-    }
+    if (!mounted) return;
+    _toastTimer?.cancel();
+    _toastAnim?.dispose();
+    _toastEntry?.remove();
+    final width = MediaQuery.sizeOf(context).width;
+    final cardWidth = math.min(width - 24, 360.0);
+    _toastAnim = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 180),
+    );
+    _toastEntry = OverlayEntry(
+      builder: (context) {
+        final isLight = Theme.of(context).brightness == Brightness.light;
+        return Positioned(
+          top: MediaQuery.paddingOf(context).top + 8,
+          left: (width - cardWidth) / 2,
+          width: cardWidth,
+          child: FadeTransition(
+            opacity: CurvedAnimation(
+                parent: _toastAnim!, curve: Curves.easeOut),
+            child: SlideTransition(
+              position: Tween<Offset>(
+                      begin: const Offset(0, -0.25), end: Offset.zero)
+                  .animate(CurvedAnimation(
+                      parent: _toastAnim!, curve: Curves.easeOut)),
+              child: Material(
+                color: Colors.transparent,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: isLight ? Colors.white : ZColors.darkCard,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: ZInk.messageBorder(context)),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: isLight ? 0.10 : 0.30),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Text(
+                    message,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      height: 1.35,
+                      color: ZInk.solid(context),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+    Overlay.of(context, rootOverlay: true).insert(_toastEntry!);
+    _toastAnim!.forward();
+    _toastTimer = Timer(const Duration(milliseconds: 2400), () async {
+      if (!mounted) return;
+      await _toastAnim?.reverse();
+      _toastEntry?.remove();
+      _toastEntry = null;
+    });
   }
 
   Future<void> _run(String errorPrefix, Future<dynamic> Function() run) async {
@@ -5796,9 +5870,11 @@ class _UsageSheet extends StatelessWidget {
     final cumulative = usage['cumulative'];
     final info = parseContextWindowInfo(usage);
     final colors = usageSegmentColors(context);
+    // 官方 w-80 用量卡的紧凑密度：卡内 p-3、标题 text-ui-base(14)、
+    // 明细 text-ui-sm(12)、区块间 space-y-3 —— 弹窗整体收拢一档。
     return SafeArea(
       child: Padding(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -5809,23 +5885,23 @@ class _UsageSheet extends StatelessWidget {
                 children: [
                   const Text('上下文容量',
                       style:
-                          TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                          TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
                   const Spacer(),
                   Text(
                     '${formatCompactTokens(info.usedTokens)} / '
                     '${formatCompactTokens(info.maxTokens)} '
                     '(${formatUsagePercent(info.ratio)})',
                     style: TextStyle(
-                        fontSize: 12,
+                        fontSize: 11.5,
                         fontFamily: 'monospace',
                         color: ZInk.muted(context)),
                   ),
                 ],
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 2),
               Text('提示词、工具调用和回复都会共享上下文窗口。',
-                  style: TextStyle(fontSize: 11, color: ZInk.faint(context))),
-              const SizedBox(height: 12),
+                  style: TextStyle(fontSize: 10.5, color: ZInk.faint(context))),
+              const SizedBox(height: 8),
               if (info.breakdown.isNotEmpty)
                 ClipRRect(
                   borderRadius: BorderRadius.circular(4),
@@ -5844,15 +5920,15 @@ class _UsageSheet extends StatelessWidget {
                     ),
                   ),
                 ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 6),
               for (var i = 0; i < info.breakdown.length; i++)
                 Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 3),
+                  padding: const EdgeInsets.symmetric(vertical: 1.5),
                   child: Row(
                     children: [
                       Container(
-                        width: 8,
-                        height: 8,
+                        width: 7,
+                        height: 7,
                         decoration: BoxDecoration(
                           color: colors[i.clamp(0, colors.length - 1)],
                           borderRadius: BorderRadius.circular(2),
@@ -5864,7 +5940,7 @@ class _UsageSheet extends StatelessWidget {
                         _contextSourceLabels[info.breakdown[i].source] ??
                             info.breakdown[i].source,
                         style: TextStyle(
-                            fontSize: 12, color: ZInk.muted(context)),
+                            fontSize: 11.5, color: ZInk.muted(context)),
                       ),
                       const Spacer(),
                       Text(
@@ -5873,7 +5949,7 @@ class _UsageSheet extends StatelessWidget {
                                 info.breakdown.fold<int>(
                                     0, (sum, e) => sum + e.chars)),
                         style: TextStyle(
-                            fontSize: 12,
+                            fontSize: 11.5,
                             fontFamily: 'monospace',
                             color: ZInk.soft(context)),
                       ),
@@ -5881,34 +5957,33 @@ class _UsageSheet extends StatelessWidget {
                   ),
                 ),
               if (info.cacheHitRate != null) ...[
-                const SizedBox(height: 6),
+                const SizedBox(height: 4),
                 Divider(height: 1, color: ZInk.messageBorder(context)),
-                const SizedBox(height: 6),
+                const SizedBox(height: 4),
                 Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 3),
+                  padding: const EdgeInsets.symmetric(vertical: 1.5),
                   child: Row(
                     children: [
                       Text('平均缓存命中率',
                           style: TextStyle(
-                              fontSize: 12, color: ZInk.muted(context))),
+                              fontSize: 11.5, color: ZInk.muted(context))),
                       const Spacer(),
                       Text(formatUsagePercent(info.cacheHitRate!),
                           style: TextStyle(
-                              fontSize: 12,
+                              fontSize: 11.5,
                               fontFamily: 'monospace',
                               color: ZInk.soft(context))),
                     ],
                   ),
                 ),
               ],
-              const SizedBox(height: 12),
+              const SizedBox(height: 6),
             ],
             if (cumulative is Map) ...[
               _UsageRow('累计输入', '${cumulative['inputTokens'] ?? 0}'),
               _UsageRow('累计输出', '${cumulative['outputTokens'] ?? 0}'),
               _UsageRow('缓存读取', '${cumulative['cacheReadTokens'] ?? 0}'),
               _UsageRow('缓存写入', '${cumulative['cacheWriteTokens'] ?? 0}'),
-              const SizedBox(height: 12),
             ],
           ],
         ),
@@ -5926,14 +6001,15 @@ class _UsageRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 1.5),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(label,
-              style: TextStyle(fontSize: 13, color: ZInk.muted(context))),
+              style: TextStyle(fontSize: 11.5, color: ZInk.muted(context))),
           Text(value,
-              style: const TextStyle(fontSize: 13, fontFamily: 'monospace')),
+              style: const TextStyle(
+                  fontSize: 11.5, fontFamily: 'monospace')),
         ],
       ),
     );
