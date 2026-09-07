@@ -180,3 +180,17 @@
 **协议补充**（逆向）：rowsRange 响应=`{rows:[…], atSeq, atLogEpoch, hasMore}`（rows 是裸数组），schema 对 limit 有 max（rowsRangeMaxLimit，值未挖到，用 50 安全）；官方 loadAllOlder 循环拉到 hasMore=false——单页大 limit 会被拒。turnHeader/turn 时长字段=startedAt/endedAt/activeMs。goal 终态枚举含 completedSuccess（勿原文渲染）。
 
 **辅助对话语义**（官方）：独立 sessionId、创建时携带主会话上下文；隐藏 goal 横幅/重试/分叉/编辑重发/点赞点踩/嵌套入口；保留完整 composer（模型/模式/思考按会话独立）+ 用量环。配置命令按 sessionId scope，串扰是 UI 层共享草稿显示问题。
+
+## 第十一轮反馈批（2026-09-08，未发版）——四个真根因
+
+**胶囊收不起的真根因不是手势**：上一轮把「无法收起」归因为 AnimatedSwitcher 过渡吞手势（见上节），实际是 `_StatusSummaryOverlay.build` 里 `if (!_expanded)` 分支构建胶囊后**没有提前 return / else**，随后的展开面板赋值把胶囊直接覆盖——点收起 rebuild 出的胶囊永远被丢弃，界面恒为面板。教训：**「移除动画修手势」这类解释若无验证就可能掩盖真正的结构性 bug**；同变量两段赋值必查互斥性。本轮已改胶囊分支提前 return。
+
+**SVG 隐式数字分隔（查询工具族整行消失的根因）**：SVG path 允许无分隔符连写数字，第二个小数点即新数字起点（`1.704.706` = `1.704` + `.706`；`c0 1.1.9 2` = `1.1` + `.9`）。解析器把整段吞成一个 token，`double.parse` 在 **paint 期**抛 FormatException → release APK 里所在工具行整体渲染失败（earth=查询/WebSearch 族、file-diff=写入编辑族均中招）。已按 SVG 数字文法在第二个小数点分词；**回归测试逐字形 pump 全部 LucideIcon 并断言无 paint 异常**（test/official_icons_test.dart），新增字形必须过这道闸。
+
+**图标名缺失 = 静默空白**：`LucideIcon(未知名)` 渲染空白 SizedBox 不报错——`git-branch` 字形从未入库，分叉按钮在 APK 里一直是隐形占位（He 报的「四个按钮错位」实为第四个按钮不存在）。图标引用走变量（`lucideIcon: 'name'`）时编译期查不出，**入库新图标后要 `grep 引用名 vs kOfficialIcons 键` 对账**；官方图标测试已断言关键字形存在。
+
+**LayerLink.leader 是 LeaderLayer 不是 RenderBox**：popover 定位强转 `as RenderBox?` 在 leader 挂载后必抛 TypeError（debug 红屏、release 静默无反应）——用量环点击「没有任何效果」整一轮都是这个。取锚点 RenderBox 的正路是给目标 widget 挂 GlobalKey 再 `currentContext.findRenderObject()`。
+
+**操作行时机（官方语义补全）**：复制/点赞/点踩/分叉只在轮次结束后出现——门控必须用**轮次级** running（`_rowIsActive`：流式文本/执行中/待确认/turnHeader running 任一即压住），按文本段自己的 streaming 判定会在工具调用间隙闪出按钮。
+
+**工具族 id 容错**：桌面流式下发的 toolName 大小写/下划线形态不定（`webSearch`/`web_search`），MCP 形态是 `server__tool`。`resolveToolFamily`（公开顶层函数，有单测）先精确归一化匹配、`__` 尾段解析，查询类模糊回退保持「搜索」族标签与 earth/search 图标。

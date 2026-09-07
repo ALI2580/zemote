@@ -2,6 +2,23 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Fixed
+- **状态胶囊真正可收起**：上一版的「整行收起」仍无效——展开面板的赋值无条件覆盖了胶囊分支（`if (!_expanded)` 构建的胶囊被随后的面板构建直接丢弃），点击收起后永远还是面板。改为胶囊分支提前返回，胶囊↔面板两态稳定切换；面板右上角按钮由关闭 X 换为官方「收起为胶囊」语义的 chevron-up（放大/缩小）。
+- **查询（search）工具族在 APK 内整行渲染失败**：SVG path 解析器不支持 SVG 隐式数字分隔，`1.704.706`（即 1.704 与 .706 两个数）被并进同一 token，`double.parse` 在 paint 期抛 FormatException——earth（WebSearch/MCP 查询族）、file-diff（写入/编辑族）等含双小数点字形的图标炸掉所在工具行。解析器现按 SVG 数字文法在第二个小数点处分词，并新增「全部官方字形无异常绘制」回归测试。
+- **分叉按钮渲染为空白**：操作行引用的 `git-branch` 字形从未入库（未知图标名渲染为空白方块），分叉按钮在 APK 里不可见——即「四个按钮错位/缺失」。已补齐官方字形。
+- **用量环点击无反应**：popover 定位把 `LayerLink.leader`（LeaderLayer）强转为 RenderBox，环挂载后每次点击都抛 TypeError，悬浮框从未弹出。改用环的 GlobalKey 取真实 RenderBox。
+- **辅助会话恢复用量环**：对齐官方语义（selection side chat 保留 composer 用量环），快照缺 contextWindow 时自动隐藏。
+
+### Changed
+- **目标并入状态胶囊**：输入框上方的绿色目标横幅移除；目标作为胶囊迷你值（目标 · 摘要）与面板条目（含校验中/已暂停状态），终态仍由时间线 goalVerify 标记承接。
+- **执行中蓝框（当前工作 + 跟随）移除**：官方无此组件，进行中状态由消息流平铺行与状态胶囊表达。
+- **消息操作行仅在轮次结束后出现**：复制/点赞/点踩/分叉在运行中（流式文本、执行中/待确认工具、turnHeader running）一律隐藏，轮次完成后出现在最后一段正文下；运行中的转圈占位同步移除。
+- **操作按钮等大对齐**：四个操作按钮统一为 30px 方格、零内边距、shrinkWrap 命中区，严格同尺寸同基线。
+- **工具行文本同中线**：工具行图标/标签/摘要/状态/diff 计数统一 1.2 行高居中对齐；流光文字显式正文墨色（不依赖继承色，modulate 混合安全）。
+- **工具族解析容错**：`resolveToolFamily` 对大小写/下划线/连字符不敏感，MCP `server__tool` 形态按尾段解析，查询类回退保持「搜索」族标签与 earth/search 图标——桌面流式下发的任意 tool id 形态不再退化为原始英文名。
+
 ## [0.6.6] - 2026-09-08
 
 ### Added

@@ -79,6 +79,9 @@ const Map<String, LucideIconData> kOfficialIcons = {
   "chevron-down": LucideIconData("chevron-down", [
     LucideShape('p', ['m6 9 6 6 6-6']),
   ]),
+  "chevron-up": LucideIconData("chevron-up", [
+    LucideShape('p', ['m18 15-6-6-6 6']),
+  ]),
   "chevron-right": LucideIconData("chevron-right", [
     LucideShape('p', ['m9 18 6-6-6-6']),
   ]),
@@ -143,6 +146,12 @@ const Map<String, LucideIconData> kOfficialIcons = {
     LucideShape('p', ['M20 14h2']),
     LucideShape('p', ['M15 13v2']),
     LucideShape('p', ['M9 13v2']),
+  ]),
+  "git-branch": LucideIconData("git-branch", [
+    LucideShape('l', ['6','3','6','15']),
+    LucideShape('c', ['18','6','3','false']),
+    LucideShape('c', ['6','18','3','false']),
+    LucideShape('p', ['M18 9a9 9 0 0 1-9 9']),
   ]),
 };
 
@@ -260,11 +269,21 @@ Path _parsePath(String d) {
     }
     final start = i;
     if (i < d.length && (d[i] == '-' || d[i] == '+')) i++;
+    var dotSeen = false;
+    var expSeen = false;
     while (i < d.length) {
       final c = d.codeUnitAt(i);
-      if ((c >= 0x30 && c <= 0x39) || d[i] == '.') {
+      if (c >= 0x30 && c <= 0x39) {
         i++;
-      } else if (d[i] == 'e' || d[i] == 'E') {
+      } else if (c == 0x2E && !dotSeen && !expSeen) {
+        // SVG 隐式分隔：第二个小数点开启下一个数字（`1.704.706` =
+        // 1.704 与 .706），并入当前 token 会让 double.parse 抛
+        // FormatException——earth/file-diff 等字形曾因此在 paint 期
+        // 炸掉整行工具卡。
+        dotSeen = true;
+        i++;
+      } else if ((c == 0x65 || c == 0x45) && !expSeen && i > start) {
+        expSeen = true;
         i++;
         if (i < d.length && (d[i] == '-' || d[i] == '+')) i++;
       } else {

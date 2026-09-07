@@ -222,9 +222,8 @@ class ChatPage extends StatefulWidget {
   final String? sessionId;
   final String title;
 
-  /// Auxiliary (side) chats reuse the parent session's usage figures in
-  /// their snapshot, so the context bar would show the main session's
-  /// percentage — hide it there.
+  /// Auxiliary (side) chats keep the composer usage ring (official parity);
+  /// the ring self-hides when the snapshot lacks a usable context window.
   final bool isSideChat;
 
   /// Notified once a draft session materializes via `createSession` — the
@@ -1751,9 +1750,12 @@ class _ChatPageState extends State<ChatPage> {
         if (info == null) return const SizedBox.shrink();
         return CompositedTransformTarget(
           link: _usageRingLink,
-          child: _ContextUsageRing(
-            ratio: info.ratio,
-            onTap: _toggleUsageOverlay,
+          child: KeyedSubtree(
+            key: _usageRingKey,
+            child: _ContextUsageRing(
+              ratio: info.ratio,
+              onTap: _toggleUsageOverlay,
+            ),
           ),
         );
       },
@@ -1820,6 +1822,11 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   final LayerLink _usageRingLink = LayerLink();
+
+  /// LeaderLayer 不是 RenderBox —— 定位 popover 前需从环的 Element 取真实
+  /// RenderBox（旧代码把 LayerLink.leader 强转 RenderBox，环一旦挂载点击
+  /// 即抛 TypeError，popover 从未弹出）。
+  final GlobalKey _usageRingKey = GlobalKey();
   OverlayEntry? _usageOverlay;
 
   void _toggleUsageOverlay() {
@@ -1833,7 +1840,7 @@ class _ChatPageState extends State<ChatPage> {
     if (state == null || sessionId == null) return;
     // 官方为环上方悬浮 popover（非底部卡片）；贴右缘时右对齐防溢出。
     final ringBox =
-        (_usageRingLink.leader) as RenderBox?;
+        _usageRingKey.currentContext?.findRenderObject() as RenderBox?;
     final screenW = MediaQuery.sizeOf(context).width;
     var right = false;
     if (ringBox != null) {
@@ -2076,17 +2083,7 @@ class _ChatPageState extends State<ChatPage> {
                               final group = groups[contentIndex];
                               final turnKey =
                                   't${group.first['rowId'] ?? contentIndex}';
-                              final running = group.any((r) {
-                                if (r['state'] == 'streaming') return true;
-                                if (r['kind'] == 'turnHeader' &&
-                                    r['state'] == 'running') {
-                                  return true;
-                                }
-                                final s = r['status'] as String? ?? '';
-                                return s == 'running' ||
-                                    s == 'inputStreaming' ||
-                                    s == 'pendingApproval';
-                              });
+                              final running = group.any(_rowIsActive);
                               final hasAssistantText =
                                   group.any((r) => r['kind'] == 'assistantText');
                               final defaultOpen = turnDefaultOpen(
@@ -2143,8 +2140,8 @@ class _ChatPageState extends State<ChatPage> {
               builder: (context, _) => Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (!widget.isSideChat) _GoalBanner(state: state),
-                  if (!widget.isSideChat) _ActiveExecutionBar(state: state),
+                  // 目标进状态胶囊；执行中蓝框（当前工作+跟随）按官方语义
+                  // 移除 —— 进行中状态由消息流自身与状态面板表达。
                   if (!widget.isSideChat) _QueueBar(state: state, transport: _transport),
                   _PendingInteractions(state: state, transport: _transport),
                 ],
@@ -2220,10 +2217,8 @@ class _ChatPageState extends State<ChatPage> {
             modeChip: _buildModeChip,
             modelChip: _buildModelChip,
             thoughtChip: _buildThoughtChip,
-            // 辅助对话净化：用量环复用主会话数据，辅助会话不显示。
-            usageRing: widget.isSideChat
-                ? const SizedBox.shrink()
-                : _buildUsageRing(),
+            // 官方语义：辅助对话保留用量环（快照缺 contextWindow 时自动隐藏）。
+            usageRing: _buildUsageRing(),
             isSideChat: widget.isSideChat,
           ),
         ],
@@ -2410,6 +2405,9 @@ class _TurnGroupWidget extends StatelessWidget {
     final assistantRows = rows.sublist(lead);
     final parts = assistantTurnParts(assistantRows);
     final showTurnHeader = !sideChat && assistantRows.isNotEmpty;
+    // 官方语义：反馈/复制/分叉等操作只在轮次结束后出现 —— 运行中的任何
+    // 行（流式文本/执行中工具/等待确认/turnHeader running）都压住操作行。
+    final turnRunning = assistantRows.any(_rowIsActive);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -2436,34 +2434,36 @@ class _TurnGroupWidget extends StatelessWidget {
               child: turnExpanded
                   ? Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: _assistantChildren(parts),
+                      children: _assistantChildren(parts, turnRunning),
                     )
                   // 官方语义：收起的只是前置思考/工具流程，最终总结保留。
                   : Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: _collapsedChildren(parts),
+                      children: _collapsedChildren(parts, turnRunning),
                     ),
             ),
           ] else
-            ..._assistantChildren(parts),
+            ..._assistantChildren(parts, turnRunning),
         ],
       ],
     );
   }
 
   /// 折叠态只渲染最后一段 assistant 总结正文。
-  List<Widget> _collapsedChildren(AssistantTurnParts parts) {
+  List<Widget> _collapsedChildren(
+      AssistantTurnParts parts, bool turnRunning) {
     var lastTextIdx = -1;
     for (var i = 0; i < parts.parts.length; i++) {
       if (parts.parts[i].kind == 'text') lastTextIdx = i;
     }
     if (lastTextIdx < 0) return const [];
-    final all = _assistantChildren(parts);
+    final all = _assistantChildren(parts, turnRunning);
     if (lastTextIdx >= all.length) return const [];
     return [all[lastTextIdx]];
   }
 
-  List<Widget> _assistantChildren(AssistantTurnParts parts) {
+  List<Widget> _assistantChildren(
+      AssistantTurnParts parts, bool turnRunning) {
     var lastTextIdx = -1;
     for (var i = 0; i < parts.parts.length; i++) {
       if (parts.parts[i].kind == 'text') lastTextIdx = i;
@@ -2479,7 +2479,7 @@ class _TurnGroupWidget extends StatelessWidget {
             'text': p.text,
             if (p.streaming) 'state': 'streaming',
           },
-          showFeedback: i == lastTextIdx && !sideChat,
+          showFeedback: i == lastTextIdx && !sideChat && !turnRunning,
           transport: transport,
           sessionId: sessionId,
           onAction: onAction,
@@ -2569,6 +2569,17 @@ bool _isExecutionRow(Map<String, dynamic> row) {
   return kind == 'toolCall' || kind == 'reasoning' || kind == 'subagent';
 }
 
+/// A row is "active" while its turn is still running: streaming text, a
+/// running/pending-approval tool or subagent, or a running turnHeader.
+/// Shared by the turn default-open heuristic and the feedback gating
+/// (copy/like/dislike/fork only appear once the turn finished).
+bool _rowIsActive(Map<String, dynamic> row) {
+  if (row['state'] == 'streaming') return true;
+  if (row['kind'] == 'turnHeader' && row['state'] == 'running') return true;
+  final s = row['status'] as String? ?? '';
+  return s == 'running' || s == 'inputStreaming' || s == 'pendingApproval';
+}
+
 String compactExecutionLabel(List<Map<String, dynamic>> rows) {
   final tools = rows.where((row) => row['kind'] == 'toolCall').length;
   final reasoning = rows.where((row) => row['kind'] == 'reasoning').length;
@@ -2585,71 +2596,6 @@ String compactExecutionLabel(List<Map<String, dynamic>> rows) {
     if (subagents > 0) '$subagents 个子代理',
   ];
   return parts.isEmpty ? '执行过程' : parts.join(' · ');
-}
-
-class _ActiveExecutionBar extends StatelessWidget {
-  final ConversationState state;
-
-  const _ActiveExecutionBar({required this.state});
-
-  @override
-  Widget build(BuildContext context) {
-    final active = state.rows.where((row) {
-      final kind = row['kind'];
-      return (kind == 'toolCall' ||
-              kind == 'reasoning' ||
-              kind == 'subagent') &&
-          (row['status'] == 'running' ||
-              row['status'] == 'inputStreaming' ||
-              row['state'] == 'streaming');
-    }).toList();
-    if (active.isEmpty) return const SizedBox.shrink();
-    final current = active.last;
-    final label = current['kind'] == 'toolCall'
-        ? '${current['toolName'] ?? '工具'} 执行中'
-        : current['kind'] == 'subagent'
-            ? '子代理执行中'
-            : '正在思考';
-    return Container(
-      margin: const EdgeInsets.fromLTRB(14, 3, 14, 0),
-      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
-      decoration: BoxDecoration(
-        color: ZColors.running.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: ZColors.running.withValues(alpha: 0.3)),
-      ),
-      child: Row(
-        children: [
-          const SizedBox(
-            width: 13,
-            height: 13,
-            child: CircularProgressIndicator(strokeWidth: 1.6),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              active.length > 1 ? '$label · 还有 ${active.length - 1} 项' : label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 11.5, color: ZInk.soft(context)),
-            ),
-          ),
-          TextButton(
-            onPressed: () => _scrollToLatest(context),
-            style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 6),
-                minimumSize: Size.zero),
-            child: const Text('跟随', style: TextStyle(fontSize: 11)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _scrollToLatest(BuildContext context) {
-    Scrollable.ensureVisible(context,
-        duration: const Duration(milliseconds: 180), alignment: 1);
-  }
 }
 
 class _RowWidget extends StatelessWidget {
@@ -3209,7 +3155,6 @@ class _AssistantBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = row['text'] as String? ?? '';
-    final streaming = row['state'] == 'streaming';
     final feedback = row['feedback'] as String?;
     return Container(
       margin: const EdgeInsets.only(right: 24, top: 4, bottom: 4),
@@ -3217,73 +3162,63 @@ class _AssistantBubble extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           ZemoteMarkdown(text),
+          // 仅在轮次结束后由上游放开（运行中无任何操作按钮，官方语义）。
           if (showFeedback)
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (streaming)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 6),
-                    child: SizedBox(
-                      width: 12,
-                      height: 12,
-                      child: CircularProgressIndicator(strokeWidth: 1.5),
-                    ),
-                  )
-                else ...[
-                  _FeedbackButton(
-                    icon: Icons.copy_outlined,
-                    lucideIcon: 'copy',
-                    active: false,
-                    onTap: () {
-                      Clipboard.setData(ClipboardData(text: text));
-                      ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                              duration: Duration(seconds: 1),
-                              content: Text('已复制')));
-                    },
-                  ),
-                  _FeedbackButton(
-                    icon: Icons.thumb_up_alt_outlined,
-                    lucideIcon: 'thumbs-up',
-                    active: feedback == 'like',
-                    onTap: () =>
-                        _setFeedback(feedback == 'like' ? null : 'like'),
-                  ),
-                  _FeedbackButton(
-                    icon: Icons.thumb_down_alt_outlined,
-                    lucideIcon: 'thumbs-down',
-                    active: feedback == 'dislike',
-                    onTap: () =>
-                        _setFeedback(feedback == 'dislike' ? null : 'dislike'),
-                  ),
-                  _FeedbackButton(
-                    icon: Icons.fork_right,
-                    lucideIcon: 'git-branch',
-                    active: false,
-                    onTap: () {
-                      if (sessionId.isEmpty) return;
-                      transport
-                          .forkAssistant(sessionId, {
-                        'rowId': row['rowId'],
-                        if (row['entityId'] != null) 'entityId': row['entityId'],
-                      })
-                          .then((_) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                  duration: Duration(seconds: 2),
-                                  content: Text('已分叉，新会话在任务列表中')));
-                        }
-                      }).catchError((Object _) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('分叉失败，请重试')));
-                        }
-                      });
-                    },
-                  ),
-                ],
+                _FeedbackButton(
+                  icon: Icons.copy_outlined,
+                  lucideIcon: 'copy',
+                  active: false,
+                  onTap: () {
+                    Clipboard.setData(ClipboardData(text: text));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                            duration: Duration(seconds: 1),
+                            content: Text('已复制')));
+                  },
+                ),
+                _FeedbackButton(
+                  icon: Icons.thumb_up_alt_outlined,
+                  lucideIcon: 'thumbs-up',
+                  active: feedback == 'like',
+                  onTap: () =>
+                      _setFeedback(feedback == 'like' ? null : 'like'),
+                ),
+                _FeedbackButton(
+                  icon: Icons.thumb_down_alt_outlined,
+                  lucideIcon: 'thumbs-down',
+                  active: feedback == 'dislike',
+                  onTap: () =>
+                      _setFeedback(feedback == 'dislike' ? null : 'dislike'),
+                ),
+                _FeedbackButton(
+                  icon: Icons.fork_right,
+                  lucideIcon: 'git-branch',
+                  active: false,
+                  onTap: () {
+                    if (sessionId.isEmpty) return;
+                    transport
+                        .forkAssistant(sessionId, {
+                          'rowId': row['rowId'],
+                          if (row['entityId'] != null) 'entityId': row['entityId'],
+                        })
+                        .then((_) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                    duration: Duration(seconds: 2),
+                                    content: Text('已分叉，新会话在任务列表中')));
+                          }
+                        }).catchError((Object _) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('分叉失败，请重试')));
+                          }
+                        });
+                  },
+                ),
               ],
             ),
         ],
@@ -3308,6 +3243,8 @@ class _FeedbackButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 官方操作行 = 等大的 ghost icon 按钮；固定 30px 方格 + 零内边距 +
+    // shrinkWrap 命中区，四个按钮严格同尺寸同基线（修错位）。
     return IconButton(
       icon: lucideIcon != null
           ? LucideIcon(lucideIcon!,
@@ -3317,6 +3254,12 @@ class _FeedbackButton extends StatelessWidget {
               color: active ? ZColors.primary : ZInk.ghost(context)),
       onPressed: onTap,
       visualDensity: VisualDensity.compact,
+      style: IconButton.styleFrom(
+        minimumSize: const Size(30, 30),
+        maximumSize: const Size(30, 30),
+        padding: EdgeInsets.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
     );
   }
 }
@@ -3366,7 +3309,8 @@ class _AnimatedGradientTextState extends State<_AnimatedGradientText>
         final q = (t / 0.5).clamp(0.0, 1.0);
         return ShaderMask(
           shaderCallback: (bounds) {
-            final w = bounds.width;
+            // 首帧约束可能为零宽 —— clamp 出 1px 防空 shader。
+            final w = bounds.width <= 0 ? 1.0 : bounds.width;
             final origin = -2 * w * (1 - q);
             return LinearGradient(
               begin: Alignment.centerLeft,
@@ -3378,7 +3322,8 @@ class _AnimatedGradientTextState extends State<_AnimatedGradientText>
           child: child,
         );
       },
-      child: Text(widget.text, style: widget.style),
+      // modulate 混合需要不透明前景；显式给正文墨色，不依赖继承主题色。
+      child: Text(widget.text, style: widget.style.copyWith(color: strong)),
     );
   }
 }
@@ -3522,6 +3467,46 @@ class _ReasoningTileState extends State<_ReasoningTile> {
   }
 }
 
+/// Official tool-family resolution (kind label + lucide glyph), from
+/// `chat.toolCall.kind.*` + the official tool-family icon map. Lookup is
+/// tolerant: exact normalized match first (case / `_` / `-` insensitive,
+/// MCP `server__tool` ids resolve by their trailing segment), then
+/// search-family aliases, so streamed desktop tool ids (`webSearch`,
+/// `web_search`, `mcp__web-search__search`) keep the official 查阅 family
+/// label and icon instead of falling back to the raw name.
+({String label, String? icon}) resolveToolFamily(String toolName) {
+  String norm(String s) =>
+      s.toLowerCase().replaceAll(RegExp(r'[_\-]'), '').trim();
+  const families = <String, ({String label, String? icon})>{
+    'read': (label: '读取', icon: 'search'),
+    'grep': (label: '搜索', icon: 'search'),
+    'glob': (label: '搜索', icon: 'search'),
+    'websearch': (label: '搜索', icon: 'earth'),
+    'webfetch': (label: '搜索', icon: 'globe'),
+    'write': (label: '写入', icon: 'file-diff'),
+    'edit': (label: '编辑', icon: 'file-diff'),
+    'multiedit': (label: '编辑', icon: 'file-diff'),
+    'notebookedit': (label: '编辑', icon: 'file-diff'),
+    'bash': (label: '终端', icon: 'terminal'),
+    'todowrite': (label: '待办', icon: 'list-todo'),
+    'task': (label: '任务', icon: 'bot'),
+  };
+  final n = norm(toolName);
+  if (n.isEmpty) return (label: '', icon: null);
+  final bySegment = toolName.contains('__')
+      ? families[norm(toolName.split('__').last)]
+      : null;
+  final hit = families[n] ?? bySegment;
+  if (hit != null) return hit;
+  if (n.contains('search') || n.contains('query')) {
+    return (label: '搜索', icon: n.contains('web') ? 'earth' : 'search');
+  }
+  if (n.contains('fetch') || n.contains('http') || n.contains('browse')) {
+    return (label: '搜索', icon: 'globe');
+  }
+  return (label: toolName, icon: null);
+}
+
 class _ToolCallTile extends StatefulWidget {
   final Map<String, dynamic> row;
 
@@ -3591,53 +3576,18 @@ class _ToolCallTileState extends State<_ToolCallTile> {
     super.dispose();
   }
 
-  /// Official kind labels — 「终端」 verified against the real light-theme
-  /// web client (shell family), others from `chat.toolCall.kind.*`.
-  static const _kindLabels = {
-    'Read': '读取',
-    'Write': '写入',
-    'Edit': '编辑',
-    'MultiEdit': '编辑',
-    'NotebookEdit': '编辑',
-    'Grep': '搜索',
-    'Glob': '搜索',
-    'WebFetch': '搜索',
-    'WebSearch': '搜索',
-    'Bash': '终端',
-    'TodoWrite': '待办',
-    'Task': '任务',
-    'AskUserQuestion': '询问',
-  };
-
-  /// Per-family OFFICIAL lucide glyphs (terminal / magnifier / earth /
-  /// bot / list-todo / file-diff — all extracted from the official bundle).
-  static const _kindLucideIcons = {
-    'Read': 'search',
-    'Grep': 'search',
-    'Glob': 'search',
-    'WebSearch': 'earth',
-    'WebFetch': 'globe',
-    'Write': 'file-diff',
-    'Edit': 'file-diff',
-    'MultiEdit': 'file-diff',
-    'NotebookEdit': 'file-diff',
-    'Bash': 'terminal',
-    'TodoWrite': 'list-todo',
-    'Task': 'bot',
-  };
-
   String get _kindLabel {
     final toolName = widget.row['toolName'] as String? ?? '';
     // 官方 ask-user-question 家族（Mrt）：kindLabel 随状态切换为
     // 「正在询问 / 已询问」。
-    if (toolName == 'AskUserQuestion') {
+    if (toolName.toLowerCase().replaceAll('_', '') == 'askuserquestion') {
       final status = widget.row['status'] as String? ?? '';
       final running = status == 'running' ||
           status == 'inputStreaming' ||
           status == 'pendingApproval';
       return running ? '正在询问' : '已询问';
     }
-    return _kindLabels[toolName] ?? toolName;
+    return resolveToolFamily(toolName).label;
   }
 
   /// ask-user-question 的输入里通常带 questions 数组（官方 secondary =
@@ -3725,7 +3675,7 @@ class _ToolCallTileState extends State<_ToolCallTile> {
     final primary = _primaryText;
     final (statusLabel, statusColor) = _statusLabel(context);
     final toolName = row['toolName'] as String? ?? '';
-    final kindIcon = Icons.build_outlined;
+    final familyIcon = resolveToolFamily(toolName).icon;
 
     // 编辑/写入行的 +/- 行数角标（官方 diffCount）。
     var added = 0, removed = 0;
@@ -3751,18 +3701,20 @@ class _ToolCallTileState extends State<_ToolCallTile> {
     // 官方 ToolLayout（浅色实测）：无卡片容器的单行灰字——专属图标 +
     // kind 标签 + `·` + 摘要（+ diff 计数），完成态无状态文字，整行
     // 点击展开左竖线详情。行随内容收拢（mainAxisSize.min），chevron
-    // 贴在文本右侧而非顶到行尾，且仅操作后短暂出现。
+    // 贴在文本右侧而非顶到行尾，且仅操作后短暂出现。所有文本统一
+    // height 1.2，与 14px 图标同一中线（修文本错位）。
     final header = Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          if (_kindLucideIcons[toolName] != null)
-            LucideIcon(_kindLucideIcons[toolName]!,
+          if (familyIcon != null)
+            LucideIcon(familyIcon,
                 size: 14,
                 color: running ? ZColors.running : ZInk.faint(context))
           else
-            Icon(kindIcon,
+            Icon(Icons.build_outlined,
                 size: 14,
                 color: running ? ZColors.running : ZInk.faint(context)),
           const SizedBox(width: 7),
@@ -3771,7 +3723,7 @@ class _ToolCallTileState extends State<_ToolCallTile> {
             _AnimatedGradientText(
               text: _kindLabel,
               style: const TextStyle(
-                  fontSize: 13, fontWeight: FontWeight.w500),
+                  fontSize: 13, fontWeight: FontWeight.w500, height: 1.2),
             )
           else
             Text(
@@ -3779,19 +3731,25 @@ class _ToolCallTileState extends State<_ToolCallTile> {
               style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w500,
+                height: 1.2,
                 // 已执行行比进行中更浅（官方 subtlest 层级）。
                 color: ZInk.faint(context),
               ),
             ),
           if (primary.isNotEmpty) ...[
             const SizedBox(width: 7),
-            Text('·', style: TextStyle(fontSize: 12, color: ZInk.faint(context))),
+            Text('·',
+                style: TextStyle(
+                    fontSize: 12,
+                    height: 1.2,
+                    color: ZInk.faint(context))),
             const SizedBox(width: 7),
             Flexible(
               child: Text(
                 primary,
                 style: TextStyle(
                     fontSize: 13,
+                    height: 1.2,
                     color: running
                         ? ZInk.soft(context)
                         : ZInk.faint(context)),
@@ -3805,25 +3763,33 @@ class _ToolCallTileState extends State<_ToolCallTile> {
                   style: TextStyle(
                       fontFamily: 'monospace',
                       fontSize: 12,
+                      height: 1.2,
                       color: ZInk.diffAdded(context))),
               const SizedBox(width: 5),
               Text('-$removed',
                   style: TextStyle(
                       fontFamily: 'monospace',
                       fontSize: 12,
+                      height: 1.2,
                       color: ZInk.diffRemoved(context))),
             ],
             if (_questionCount > 1) ...[
               const SizedBox(width: 8),
               Text('$_questionCount 个问题',
-                  style: TextStyle(fontSize: 12, color: ZInk.faint(context))),
+                  style: TextStyle(
+                      fontSize: 12,
+                      height: 1.2,
+                      color: ZInk.faint(context))),
             ],
           ],
           if (statusLabel != null)
             Padding(
               padding: const EdgeInsets.only(left: 7),
               child: Text(statusLabel,
-                  style: TextStyle(fontSize: 12, color: statusColor)),
+                  style: TextStyle(
+                      fontSize: 12,
+                      height: 1.2,
+                      color: statusColor)),
             ),
           if (hasDetails) ...[
             const SizedBox(width: 6),
@@ -4425,66 +4391,19 @@ List<Color> usageSegmentColors(BuildContext context) {
   ];
 }
 
-class _GoalBanner extends StatelessWidget {
-  final ConversationState state;
-
-  const _GoalBanner({required this.state});
-
-  /// 目标横幅展示时机（对齐官方 goal 语义）：目标进行中/校验中/已暂停
-  /// 才展示；协议终态（completedSuccess / completedIncomplete /
-  /// cancelled 等）不再常驻——结果由时间线的 goalVerify 标记记录。
-  static (bool, String?) _statusText(String status) {
-    final s = status.toLowerCase();
-    if (s.isEmpty) return (true, null);
-    if (s.contains('complete') || s.contains('cancel') || s.contains('fail') || s.contains('error')) {
-      return (false, null);
-    }
-    if (s.contains('check') || s.contains('verif')) return (true, '目标校验中');
-    if (s.contains('pause') || s.contains('hold')) return (true, '已暂停');
-    return (true, null);
+/// 目标展示时机（对齐官方 goal 语义）：目标进行中/校验中/已暂停才算
+/// 活跃，进状态胶囊/面板；协议终态（completedSuccess /
+/// completedIncomplete / cancelled 等）不常驻——结果由时间线的
+/// goalVerify 标记记录。返回 (活跃?, 状态文案)。
+(bool, String?) goalBannerStatus(String status) {
+  final s = status.toLowerCase();
+  if (s.isEmpty) return (true, null);
+  if (s.contains('complete') || s.contains('cancel') || s.contains('fail') || s.contains('error')) {
+    return (false, null);
   }
-
-  @override
-  Widget build(BuildContext context) {
-    final goal = state.goal;
-    if (goal == null) return const SizedBox.shrink();
-    final objective = '${goal['objective'] ?? ''}';
-    if (objective.isEmpty) return const SizedBox.shrink();
-    final (show, statusText) = _statusText('${goal['status'] ?? ''}');
-    if (!show) return const SizedBox.shrink();
-    return Container(
-      margin: const EdgeInsets.fromLTRB(14, 4, 14, 0),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: ZColors.success.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: ZColors.success.withValues(alpha: 0.25)),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.flag_outlined, size: 14, color: ZColors.success),
-          const SizedBox(width: 8),
-          Text('目标',
-              style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: ZColors.success)),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              objective,
-              style: TextStyle(fontSize: 12, color: ZInk.soft(context)),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          if (statusText != null)
-            Text(statusText,
-                style: const TextStyle(fontSize: 11, color: ZColors.success)),
-        ],
-      ),
-    );
-  }
+  if (s.contains('check') || s.contains('verif')) return (true, '目标校验中');
+  if (s.contains('pause') || s.contains('hold')) return (true, '已暂停');
+  return (true, null);
 }
 
 // ignore: unused_element
@@ -4673,11 +4592,17 @@ class _StatusSummaryOverlayState extends State<_StatusSummaryOverlay> {
       snapshotPlan: widget.state.plan ?? widget.rpcPlan,
     );
     final works = widget.state.backgroundWorks;
+    final goal = widget.state.goal;
+    final goalObjective = '${goal?['objective'] ?? ''}';
+    final (goalActive, goalStatus) =
+        goalBannerStatus('${goal?['status'] ?? ''}');
+    final hasGoal = goal != null && goalObjective.isNotEmpty && goalActive;
     final hasPlan = steps?.isNotEmpty ?? false;
     final hasWorks = works.isNotEmpty;
     // auto 策略：无事发生时整个隐藏（旧版常驻卡不再占位）。
-    if (!hasPlan && !hasWorks) return const SizedBox.shrink();
+    if (!hasPlan && !hasWorks && !hasGoal) return const SizedBox.shrink();
 
+    final size = MediaQuery.sizeOf(context);
     final popover = Theme.of(context).brightness == Brightness.light
         ? ZColors.composerLight
         : ZColors.composerDark;
@@ -4694,10 +4619,9 @@ class _StatusSummaryOverlayState extends State<_StatusSummaryOverlay> {
       ],
     );
 
-    Widget child;
     if (!_expanded) {
       // mini 胶囊：官方 max-h-8.5（34px）。
-      child = Material(
+      return Material(
         color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(17),
@@ -4705,11 +4629,29 @@ class _StatusSummaryOverlayState extends State<_StatusSummaryOverlay> {
           child: Container(
             height: 34,
             padding: const EdgeInsets.symmetric(horizontal: 12),
+            constraints: BoxConstraints(maxWidth: size.width - 24),
             decoration: decoration,
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
+                if (hasGoal) ...[
+                  const Icon(Icons.flag_outlined,
+                      size: 13, color: ZColors.success),
+                  const SizedBox(width: 5),
+                  Flexible(
+                    child: Text(
+                      goalObjective.length > 6
+                          ? '目标 · $goalObjective'
+                          : '目标',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          fontSize: 11.5, color: ZInk.solid(context)),
+                    ),
+                  ),
+                ],
                 if (hasPlan) ...[
+                  if (hasGoal) const SizedBox(width: 10),
                   const Icon(Icons.account_tree_outlined,
                       size: 13, color: ZColors.primary),
                   const SizedBox(width: 5),
@@ -4719,18 +4661,8 @@ class _StatusSummaryOverlayState extends State<_StatusSummaryOverlay> {
                         fontSize: 11.5, color: ZInk.solid(context)),
                   ),
                 ],
-                if (widget.state.goal != null &&
-                    '${widget.state.goal!['objective'] ?? ''}'.isNotEmpty) ...[
-                  if (hasPlan || hasWorks) const SizedBox(width: 10),
-                  Icon(Icons.flag_outlined,
-                      size: 12, color: ZColors.success),
-                  const SizedBox(width: 5),
-                  Text('目标',
-                      style: TextStyle(
-                          fontSize: 11.5, color: ZInk.solid(context))),
-                ],
-                if (hasPlan && hasWorks) const SizedBox(width: 10),
                 if (hasWorks) ...[
+                  if (hasGoal || hasPlan) const SizedBox(width: 10),
                   Icon(
                     Icons.pending_actions_outlined,
                     size: 13,
@@ -4755,10 +4687,9 @@ class _StatusSummaryOverlayState extends State<_StatusSummaryOverlay> {
     }
 
     // 展开面板：官方 w-80（320px）max-h-[min(64dvh,32rem)] 圆角 2xl。
-    final size = MediaQuery.sizeOf(context);
     final done = steps?.where((s) => s.completed).length ?? 0;
     final fileSummary = summarizeFileChanges(_fileData);
-    child = Material(
+    return Material(
       color: Colors.transparent,
       child: Container(
         width: math.min(320, size.width - 24),
@@ -4770,7 +4701,8 @@ class _StatusSummaryOverlayState extends State<_StatusSummaryOverlay> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 整行可点收起（不依赖小图标命中）。
+            // 整行可点收起（不依赖小图标命中）；按钮为官方「收起为胶囊」
+            // 语义的放大/缩小 chevron，不再是关闭 X。
             GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: () => setState(() => _expanded = false),
@@ -4784,7 +4716,7 @@ class _StatusSummaryOverlayState extends State<_StatusSummaryOverlay> {
                             fontWeight: FontWeight.w600,
                             color: ZInk.solid(context))),
                     const Spacer(),
-                    Icon(Icons.close,
+                    LucideIcon('chevron-up',
                         size: 16, color: ZInk.muted(context)),
                   ],
                 ),
@@ -4796,6 +4728,41 @@ class _StatusSummaryOverlayState extends State<_StatusSummaryOverlay> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    if (hasGoal) ...[
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.flag_outlined,
+                                size: 15, color: ZColors.success),
+                            const SizedBox(width: 8),
+                            Text('目标',
+                                style: TextStyle(
+                                    fontSize: 12.5,
+                                    color: ZInk.solid(context))),
+                            const Spacer(),
+                            if (goalStatus != null)
+                              Text(goalStatus,
+                                  style: const TextStyle(
+                                      fontSize: 11,
+                                      color: ZColors.success)),
+                          ],
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(35, 0, 12, 6),
+                        child: Text(
+                          goalObjective,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              fontSize: 12,
+                              height: 1.35,
+                              color: ZInk.soft(context)),
+                        ),
+                      ),
+                      _divider(context),
+                    ],
                     if (hasPlan) ...[
                       _sectionRow(
                         context,
@@ -4882,8 +4849,6 @@ class _StatusSummaryOverlayState extends State<_StatusSummaryOverlay> {
         ),
       ),
     );
-
-    return child;
   }
 
   Widget _divider(BuildContext context) => Divider(
@@ -6547,4 +6512,72 @@ class _ActionItem extends StatelessWidget {
           ),
         ),
       );
+}
+
+/// Test-only: representative private chat rows for visual regression
+/// (tool-family header alignment + action-row sizing are pixel-sensitive).
+@visibleForTesting
+Widget chatRowsGoldenSample() {
+  Widget feedbackRow() => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _FeedbackButton(
+              icon: Icons.copy_outlined,
+              lucideIcon: 'copy',
+              active: false,
+              onTap: () {}),
+          _FeedbackButton(
+              icon: Icons.thumb_up_alt_outlined,
+              lucideIcon: 'thumbs-up',
+              active: true,
+              onTap: () {}),
+          _FeedbackButton(
+              icon: Icons.thumb_down_alt_outlined,
+              lucideIcon: 'thumbs-down',
+              active: false,
+              onTap: () {}),
+          _FeedbackButton(
+              icon: Icons.fork_right,
+              lucideIcon: 'git-branch',
+              active: false,
+              onTap: () {}),
+        ],
+      );
+  return Builder(builder: (context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _ToolCallTile(row: {
+          'kind': 'toolCall',
+          'toolName': 'WebSearch',
+          'status': 'completed',
+          'inputText': '{"query":"official web ui reverse engineering"}',
+        }),
+        _ToolCallTile(row: {
+          'kind': 'toolCall',
+          'toolName': 'Edit',
+          'status': 'completed',
+          'inputText': '{"filePath":"lib/ui/chat_page.dart"}',
+        }),
+        _ToolCallTile(row: {
+          'kind': 'toolCall',
+          'toolName': 'Bash',
+          'status': 'running',
+          'inputText': '{"command":"flutter analyze"}',
+        }),
+        _ToolCallTile(row: {
+          'kind': 'toolCall',
+          'toolName': 'mcp__web-search__search',
+          'status': 'running',
+          'inputText': '{"query":"layer link renderbox"}',
+        }),
+        const SizedBox(height: 8),
+        Padding(
+          padding: const EdgeInsets.only(left: 4),
+          child: feedbackRow(),
+        ),
+      ],
+    );
+  });
 }

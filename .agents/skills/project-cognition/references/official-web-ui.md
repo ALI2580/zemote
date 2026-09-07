@@ -262,7 +262,8 @@ bg-surface px-4 py-3 text-ui-base text-foreground @min-[624px]/conversation:max-
   - slash 面板不注册 `side`/`btw` 命令（那是主会话开辅助对话的入口）。
   保留：消息流、composer、模型/模式/思考切换、用量环。
 - Zemote 落地：ChatPage.isSideChat → 隐藏 turnHeader（本轮完成·用时）、goal 横幅、
-  assistant 反馈/分叉行、长按操作菜单；用量环照常显示。
+  assistant 反馈/分叉行、长按操作菜单；用量环照常显示（0608 第十一轮曾误隐，
+  已恢复——辅助会话快照自带 contextWindow，缺字段时环自动隐藏）。
 
 ### Composer 工具栏断点（容器查询，2026-09-07 第二轮解密；OF/VI 组件 0707 晚三轮补全）
 
