@@ -7,7 +7,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart';
 
-import '../protocol/channel_client.dart';
 import '../protocol/conversation.dart';
 import '../protocol/zemote_client.dart';
 import '../state/log_store.dart';
@@ -268,6 +267,7 @@ class _PendingFile {
 /// Official-web naming/presentation for the four collaboration modes
 /// (scraped from the desktop web remote control composer).
 const _modePresentation = <String, (IconData, String, String)>{
+  'default': (Icons.tune, '默认模式', '使用默认确认策略。'),
   'build': (Icons.back_hand, '变更前确认', '改文件前先问我。'),
   'edit': (Icons.edit_note, '自动编辑', '自动编辑文件。'),
   'plan': (Icons.checklist, '计划模式', '编辑前先出计划。'),
@@ -371,6 +371,23 @@ double thoughtBarFill(List<String> optionValues, String current) {
   final enabled = (ranked.length - offCount).clamp(1, ranked.length);
   final filled = (idx + 1 - offCount) / enabled;
   return filled.clamp(0.0, 1.0);
+}
+
+/// 官方 turnHeader 时长解析（bundle BX 函数）：activeMs 优先，其次
+/// endedAt-startedAt，运行中用 nowMs-startedAt。
+int? turnDurationMs(Map<String, dynamic> row, {required bool running}) {
+  final active = (row['activeMs'] as num?)?.toInt();
+  if (active != null) return active;
+  final startedAt = (row['startedAt'] as num?)?.toInt();
+  final endedAt = (row['endedAt'] as num?)?.toInt();
+  if (startedAt != null && endedAt != null) {
+    return (endedAt - startedAt).clamp(0, 1 << 40);
+  }
+  if (running && startedAt != null) {
+    return (DateTime.now().millisecondsSinceEpoch - startedAt)
+        .clamp(0, 1 << 40);
+  }
+  return null;
 }
 
 /// 顶部会话状态中文标签（协议 phase 枚举 → 中文，与任务列表文案一致）。
@@ -2502,7 +2519,7 @@ class _TurnGroupWidget extends StatelessWidget {
       List<Map<String, dynamic>> assistantRows) {
     final header = parts.header;
     String st = header?['state'] as String? ?? '';
-    final ms = (header?['activeMs'] as num?)?.toInt();
+    final ms = turnDurationMs(header ?? const {}, running: st == 'running');
     if (st.isEmpty || st == 'running') {
       final anyRunning = assistantRows.any((r) {
         if (r['state'] == 'streaming') return true;
@@ -4183,7 +4200,7 @@ class _TurnHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     // 官方 turnHeader（PX）：subtle 一行「已工作 {duration}」，无色彩编码。
     final st = row['state'] as String? ?? '';
-    final ms = (row['activeMs'] as num?)?.toInt();
+    final ms = turnDurationMs(row, running: st == 'running');
     final label = turnWorkLabel(state: st, durationMs: ms);
     return Container(
       margin: const EdgeInsets.only(top: 10, bottom: 6),
@@ -5906,36 +5923,6 @@ class _UsageSheet extends StatelessWidget {
               _UsageRow('缓存写入', '${cumulative['cacheWriteTokens'] ?? 0}'),
               const SizedBox(height: 12),
             ],
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                icon: const Icon(Icons.query_stats, size: 16),
-                label: const Text('查询任务级用量 (getTaskTokenUsage)'),
-                onPressed: () async {
-                  try {
-                    final res = await session.channels.call(
-                      Channels.zcodeTask,
-                      'getTaskTokenUsage',
-                      [
-                        {...scope, 'taskId': sessionId},
-                      ],
-                    );
-                    if (context.mounted) {
-                      showModalBottomSheet(
-                        context: context,
-                        builder: (context) =>
-                            _StructuredSheet(title: '任务用量', data: res),
-                      );
-                    }
-                  } catch (e) {
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context)
-                          .showSnackBar(SnackBar(content: Text('查询失败: $e')));
-                    }
-                  }
-                },
-              ),
-            ),
           ],
         ),
       ),
@@ -6340,15 +6327,13 @@ class _InputBarState extends State<_InputBar> {
                             widget.sending ? null : () => _showActions(context),
                       ),
                       const SizedBox(width: 2),
-                      if (!widget.isSideChat) widget.modeChip(w),
+                      widget.modeChip(w),
                       const Spacer(),
                       widget.usageRing,
-                      if (!widget.isSideChat) ...[
-                        const SizedBox(width: 6),
-                        widget.modelChip(w),
-                        const SizedBox(width: 6),
-                        widget.thoughtChip(w),
-                      ],
+                      const SizedBox(width: 6),
+                      widget.modelChip(w),
+                      const SizedBox(width: 6),
+                      widget.thoughtChip(w),
                       const SizedBox(width: 4),
                       _SendButton(
                         sending: widget.sending,
