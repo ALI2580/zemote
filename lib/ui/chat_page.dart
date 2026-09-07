@@ -2944,6 +2944,8 @@ class _UserBubbleState extends State<_UserBubble> {
                     decoration: const InputDecoration(
                       filled: false,
                       border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
                       isDense: true,
                       contentPadding: EdgeInsets.zero,
                     ),
@@ -6290,6 +6292,10 @@ class _InputBarState extends State<_InputBar> {
                         hintText: '向 ZCode 发送消息…',
                         filled: false,
                         border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: InputBorder.none,
                         isDense: true,
                         contentPadding: const EdgeInsets.symmetric(
                             horizontal: 10, vertical: 12),
