@@ -5,6 +5,7 @@
 ## [0.6.9] - 2026-09-07
 
 ### Fixed
+- **主辅会话模型/思考强度串扰排查（Zemote 侧全链路审查）**：入口（createSelectionSideSession 严格返回新 sessionId）→ 命令（switchModelConfig 只带本会话 sessionId，payload 与官方 schema 一致）→ 订阅（每会话独立 ConversationSubscription）→ 帧路由（按 conversation/{sessionId} topic 过滤）→ 状态（ConversationState 按订阅实例隔离）→ UI 读取（_state.config + workspace 级 _prep 仅回退）六层均无共享变量；新增 test/side_chat_config_test.dart 四项隔离锚定（主→辅 / 辅→主 / 乐观更新 / 快照前缓冲均互不影响）。官方 bundle 解密确认配置是两层模型：workspace 级 draft（共享，最近选择）+ 会话级 config（独立），"新会话继承配置"由客户端主动推送 draft 实现（Fn.current），非桌面共享。若实测仍串扰，嫌疑收敛到桌面端，用 LogStore 的 [v4] 帧日志定位。
 - **窄屏工具栏溢出与右组不贴右**：`Spacer + Flexible(模型 chip)` 双 flex 平分剩余空间把右侧按钮组拉散（发送不再贴右）——改为官方 leading `flex-1` 单 flex 结构，trailing（用量/模型/思考/发送）不可压缩恒贴右；长模型名仍由 chip 内 label ellipsis 吸收。
 - **思考强度绿色竖条恢复 <576 全显**（He 指定，有意偏离官方 @sm..@xl 区间——含 <384 纯图标态）。
 - **“+”入口图标恢复加号**（He 指定；官方为 ellipsis 三点，锚定菜单形式保留）。

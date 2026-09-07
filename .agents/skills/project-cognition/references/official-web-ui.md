@@ -249,6 +249,28 @@ bg-surface px-4 py-3 text-ui-base text-foreground @min-[624px]/conversation:max-
   compress 相关键（压缩 / 发送 {command} 压缩当前上下文 / 打开 Token 调试）挂在
   quota 区，未随环实现。
 
+### 配置两层模型与 draft 收敛（2026-09-09 解密，Fn.current）
+
+官方 composer 配置是**两层**：
+1. **workspace draft config**（`It.current`/`$t`，跨会话共享）：用户最近一次的
+   模型/思考/模式选择 —— 所有 pane 的 composer 草稿共享这一个变量。
+2. **session config**（每会话独立，桌面存储）：`switchModelConfig` 等 envelope
+   带 sessionId 作用域，schema payload = `{provider, model, thought,
+   runtimeModel?}`（runtimeModel 仅 provider 不在 registry 的恢复路径发）。
+
+**收敛机制（Fn.current）**：发送前置检查里 `t===null`（无消息的同步调用）时，
+读 workspace draft，与目标会话 config 比较（`Qe.current?.sessionId===e` 时才有
+n，否则 n=null → 无条件推），不一致就发 `switchModelConfig({targetSessionId:e})`。
+即官方"新会话/切 pane 继承用户最近选择"是**客户端主动推送 draft**，不是桌面共享。
+
+**Zemote 对照**（2026-09-09 全链路审查，test/side_chat_config_test.dart 锚定）：
+Zemote 无 draft 收敛逻辑，chips 读 `_state.config`（会话级）+ `_prep`
+（prepareWorkspace 仅回退/选项列表），命令/订阅/帧路由（topic=
+conversation/{sessionId}）/state/optimisticPatch 五层全部按 sessionId 隔离，
+代码层无主辅共享变量。若实测仍串扰 → 嫌疑收敛到桌面端对 side chat config 的
+处理，用 LogStore `[v4]` 帧日志（看主会话 topic 是否收到 config 变化的
+state.updated）定位。
+
 ### 辅助对话（selection side chat）官方语义（2026-09-07 解密）
 
 - 创建：`createSelectionSideSession {firstInput?: {text}}`——从主会话选区
