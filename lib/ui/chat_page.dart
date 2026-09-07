@@ -1736,8 +1736,9 @@ class _ChatPageState extends State<ChatPage> {
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
       menuWidth: 224,
       sideOffset: 4,
-      // 竖条只在 @sm..@xl（384–576）出现；<384 是 size-7 方形纯图标。
-      barFill: composerWidth >= _composerSm && composerWidth < _composerXl && values.isNotEmpty
+      // He 指定（第八轮）：竖条 <576 全程显示（含 <384 纯图标态），
+      // 有意偏离官方 `@sm..@xl` 区间。
+      barFill: composerWidth < _composerXl && values.isNotEmpty
           ? thoughtBarFill(values, _currentThoughtValue)
           : null,
       tooltip: composerWidth >= _composerXl
@@ -6222,25 +6223,30 @@ class _InputBarState extends State<_InputBar> {
               LayoutBuilder(
                 builder: (context, constraints) {
                   final w = constraints.maxWidth;
-                  // 官方工具栏行（vRe）：`flex items-end gap-3`，左
-                  // leading（+菜单/模式 chip）flex-1，右 trailing（用量/
-                  // 模型/思考/发送）同一行 gap-1(4px)，整行 28px 等高。
+                  // 官方 vRe 双组：leading（+ 入口/模式 chip）= `flex
+                  // min-w-0 flex-1` 吃掉全部剩余空间，trailing（用量/
+                  // 模型/思考/发送）不可压缩、永远贴右；长模型名由 chip
+                  // 内 label ellipsis 吸收。禁止再用 Spacer+Flexible 双
+                  // flex——两个 flex 平分剩余空间会把右组拉散（不靠右）。
                   return Row(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      _PlusMenuButton(
-                        disabled: widget.sending,
-                        onAttach: widget.onAttach,
-                        onTrigger: _insertTrigger,
+                      Expanded(
+                        child: Row(
+                          children: [
+                            _PlusMenuButton(
+                              disabled: widget.sending,
+                              onAttach: widget.onAttach,
+                              onTrigger: _insertTrigger,
+                            ),
+                            const SizedBox(width: 4),
+                            widget.modeChip(w),
+                          ],
+                        ),
                       ),
-                      const SizedBox(width: 4),
-                      widget.modeChip(w),
-                      const Spacer(),
                       widget.usageRing,
                       const SizedBox(width: 4),
-                      // 官方 chips span `min-w-0 shrink`：空间不足时长模型
-                      // 名优先被压缩省略（chip 内 label ellipsis）。
-                      Flexible(child: widget.modelChip(w)),
+                      widget.modelChip(w),
                       const SizedBox(width: 4),
                       widget.thoughtChip(w),
                       const SizedBox(width: 4),
@@ -6525,7 +6531,8 @@ class _PlusMenuButtonState extends State<_PlusMenuButton> {
       child: _ToolbarGhostButton(
         tooltip: '更多操作',
         onTap: widget.disabled ? null : () => _entry == null ? _open() : _close(),
-        child: LucideIcon('ellipsis', size: 16, color: ZInk.muted(context)),
+        // He 指定：加号（plus）而非官方的 ellipsis 三点。
+        child: LucideIcon('plus', size: 16, color: ZInk.muted(context)),
       ),
     );
   }
@@ -6596,35 +6603,40 @@ Widget chatRowsGoldenSample() {
         ),
         const SizedBox(height: 12),
         // 官方工具栏行（vRe 双组结构）：左 leading（+ 入口/模式 chip）
-        // flex-1，右 trailing（chips+发送）不可压缩、gap-1 —— 整行 28px
-        // 等高；长模型名由 chip 内 label ellipsis 吸收。
+        // Expanded 吃剩余空间，右 trailing（chips+发送）不可压缩贴右
+        // —— 整行 28px 等高；长模型名由 chip 内 label ellipsis 吸收。
         Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            _ToolbarGhostButton(
-              tooltip: '更多操作',
-              onTap: () {},
-              child: Builder(builder: (c) =>
-                  LucideIcon('ellipsis', size: 16, color: ZInk.muted(c))),
+            Expanded(
+              child: Row(
+                children: [
+                  _ToolbarGhostButton(
+                    tooltip: '更多操作',
+                    onTap: () {},
+                    child: Builder(builder: (c) =>
+                        LucideIcon('plus', size: 16, color: ZInk.muted(c))),
+                  ),
+                  const SizedBox(width: 4),
+                  // 真实窄屏（<576）形态：模式 chip 图标方形。
+                  Builder(builder: (c) => ComposerChip(
+                        icon: Icons.tune,
+                        lucideIcon: modeLucideGlyph('plan'),
+                        label: '计划模式',
+                        iconOnly: true,
+                        menuWidth: 256,
+                        menuBuilder: (_, close) => const SizedBox(),
+                      )),
+                ],
+              ),
             ),
-            const SizedBox(width: 4),
             Builder(builder: (c) => ComposerChip(
-                  icon: Icons.tune,
-                  lucideIcon: modeLucideGlyph('plan'),
-                  label: '计划模式',
-                  menuWidth: 256,
+                  icon: Icons.inventory_2_outlined,
+                  label: 'GLM-5.2',
+                  showIcon: false,
+                  sideOffset: 0,
                   menuBuilder: (_, close) => const SizedBox(),
                 )),
-            const Spacer(),
-            Flexible(
-              child: Builder(builder: (c) => ComposerChip(
-                    icon: Icons.inventory_2_outlined,
-                    label: 'GLM-5.2',
-                    showIcon: false,
-                    sideOffset: 0,
-                    menuBuilder: (_, close) => const SizedBox(),
-                  )),
-            ),
             const SizedBox(width: 4),
             Builder(builder: (c) => ComposerChip(
                   icon: Icons.psychology_outlined,

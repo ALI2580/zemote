@@ -13,6 +13,9 @@
 - **菜单卡与菜单行官方外观**：rounded-xl + p-1(4px) + shadow-md 双层；菜单行 min-h-8/pl-2/icon16，选中项不变蓝（文字正常色 + check 图标 subtle）。
 
 ### Fixed
+- **窄屏工具栏溢出与右组不贴右**：`Spacer + Flexible(模型 chip)` 双 flex 平分剩余空间把右侧按钮组拉散（发送不再贴右）——改为官方 leading `flex-1` 单 flex 结构，trailing（用量/模型/思考/发送）不可压缩恒贴右；长模型名仍由 chip 内 label ellipsis 吸收。
+- **思考强度绿色竖条恢复 <576 全显**（He 指定，有意偏离官方 @sm..@xl 区间——含 <384 纯图标态）。
+- **“+”入口图标恢复加号**（He 指定；官方为 ellipsis 三点，锚定菜单形式保留）。
 - **窄屏工具栏溢出**：长模型名把工具栏行撑出黄黑溢出条——模型 chip label 官方 `min-w-0 truncate` 语义（ellipsis 吸收）+ chip 外层 Flexible 可压缩；思考竖条只在 384–576 显示（<384 恢复 size-7 方形纯图标）；voice 按钮从 40px IconButton 收为 28px 方形与整行等高；输入面水平边距对称化（文字距缘 ≈12px，官方 p-3 语义）。
 
 ## [0.6.7] - 2026-09-07

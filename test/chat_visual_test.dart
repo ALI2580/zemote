@@ -76,8 +76,9 @@ void main() {
     final plusBox = tester.renderObject<RenderBox>(
         find.byType(SizedBox).last);
     expect(plusBox.size.height, 28);
-    // chip 文字存在（模式/模型两态；思考竖条态按官方 @xl 前隐藏 label）。
-    expect(find.text('计划模式'), findsOneWidget);
+    // chip 文字存在（模型展开态；模式 iconOnly 方形 + 思考竖条态按官方
+    // @xl 前隐藏 label）。
+    expect(find.text('计划模式'), findsNothing);
     expect(find.text('GLM-5.2'), findsOneWidget);
     expect(find.text('思考'), findsNothing);
   });
