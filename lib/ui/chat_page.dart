@@ -6438,6 +6438,7 @@ class _InputBarState extends State<_InputBar> {
                   ),
                 ],
               ),
+            ],
           ),
         ),
       ),
