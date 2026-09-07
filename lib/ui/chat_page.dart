@@ -273,6 +273,26 @@ const _modePresentation = <String, (IconData, String, String)>{
   'yolo': (Icons.gpp_maybe, '完全访问', '减少确认次数。'),
 };
 
+/// Official per-mode trigger glyph (bundle `FI` direct translation):
+/// bypass/full-access/yolo family → shield-alert; default/build → hand;
+/// plan → notepad-text; auto/acceptEdits/agent/autoEdit/dontAsk/edit →
+/// shield-check; anything else falls back to hand (official default arm).
+String modeLucideGlyph(String value) {
+  final v = value.trim().toLowerCase();
+  if (v == 'yolo' || v == 'bypasspermissions' || v == 'full-access' ||
+      v == 'fullaccess' || v == 'agent-full-access') {
+    return 'shield-alert';
+  }
+  if (v == 'plan') return 'notepad-text';
+  if (v == 'default' || v == 'build') return 'hand';
+  if (const [
+    'auto', 'acceptedits', 'agent', 'autoedit', 'dontask', 'edit',
+  ].contains(v)) {
+    return 'shield-check';
+  }
+  return 'hand';
+}
+
 String _modeTitleOf(String value, String fallbackName) {
   final hit = _modePresentation[value.trim().toLowerCase()];
   return hit?.$2 ?? (fallbackName.isNotEmpty ? fallbackName : value);
@@ -283,9 +303,6 @@ String? _modeSubtitleOf(String value, String? desktopDescription) {
   // 只保留本地中文文案。
   return _modePresentation[value.trim().toLowerCase()]?.$3;
 }
-
-IconData? _modeIconOf(String value) =>
-    _modePresentation[value.trim().toLowerCase()]?.$1;
 
 String _thoughtTitleOf(String value, String fallbackName) {
   switch (value.trim().toLowerCase()) {
@@ -539,7 +556,6 @@ class _ChatPageState extends State<ChatPage> {
   double? _uploadProgress;
   WorkspacePrep? _prep;
   List<SkillEntry> _skills = [];
-  bool _skillsLoading = false;
   Object? _planData;
   bool _planLoading = false;
   int _planRevision = -1;
@@ -728,14 +744,11 @@ class _ChatPageState extends State<ChatPage> {
       final prep = await _transport.prepareWorkspace();
       if (mounted) setState(() => _prep = prep);
     } catch (_) {}
-    setState(() => _skillsLoading = true);
     try {
       final skills = await _transport.skills();
       if (mounted) setState(() => _skills = skills);
     } catch (_) {
       if (mounted) setState(() => _skills = const []);
-    } finally {
-      if (mounted) setState(() => _skillsLoading = false);
     }
   }
 
@@ -1594,7 +1607,7 @@ class _ChatPageState extends State<ChatPage> {
             String? description) =>
         (
           ComposerMenuEntry(
-            icon: _modeIconOf(value) ?? Icons.tune,
+            lucideIcon: modeLucideGlyph(value),
             title: _modeTitleOf(value, fallbackName),
             subtitle: _modeSubtitleOf(value, description),
             selected: value == _currentModeValue,
@@ -1639,15 +1652,18 @@ class _ChatPageState extends State<ChatPage> {
   Widget _buildModeChip(double composerWidth) {
     final isFull = _currentModeValue == 'yolo' ||
         _currentModeValue.toLowerCase() == 'fullaccess';
-    // 官方模式 chip（II 组件）：宽度按 composer 容器实测（LayoutBuilder），
-    // <@xl(576) 只有 icon，≥@xl 恢复图标+文本。
+    // 官方模式 chip（S2e/II）：宽度按 composer 容器实测（LayoutBuilder），
+    // <@xl(576) 只有模式图标（FI 映射），≥@xl 恢复图标+文本+chevron；
+    // bypass/yolo 家族图标 shield-alert 且文字 warning 色。
     final iconOnly = composerWidth < _composerXl;
     return ComposerChip(
-      icon: isFull ? Icons.gpp_maybe : Icons.shield_outlined,
-      lucideIcon: 'sliders-horizontal',
+      icon: Icons.tune,
+      lucideIcon: modeLucideGlyph(_currentModeValue),
       label: _currentModeLabel,
       labelColor: isFull ? _fullAccessInkFor(context) : null,
       iconOnly: iconOnly,
+      menuWidth: 256,
+      sideOffset: 4,
       tooltip: '协作模式 · $_currentModeLabel',
       menuBuilder: (context, close) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1683,6 +1699,8 @@ class _ChatPageState extends State<ChatPage> {
       enabled: available,
       iconOnly: composerWidth < _composerSm,
       showIcon: composerWidth < _composerSm,
+      // 官方模型菜单（Qe）无 sideOffset（radix 默认 0）。
+      sideOffset: 0,
       tooltip: '选择模型',
       menuBuilder: (context, close) => ComposerModelMenuBody(
         options: option!.options,
@@ -1714,7 +1732,12 @@ class _ChatPageState extends State<ChatPage> {
       label: _currentThoughtLabel,
       enabled: entries.isNotEmpty,
       iconOnly: iconOnly,
-      barFill: composerWidth < _composerXl && values.isNotEmpty
+      // 官方思考触发器 `gap-1 rounded-lg px-1.5 py-1.5`（6/6）。
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+      menuWidth: 224,
+      sideOffset: 4,
+      // 竖条只在 @sm..@xl（384–576）出现；<384 是 size-7 方形纯图标。
+      barFill: composerWidth >= _composerSm && composerWidth < _composerXl && values.isNotEmpty
           ? thoughtBarFill(values, _currentThoughtValue)
           : null,
       tooltip: composerWidth >= _composerXl
@@ -1801,26 +1824,6 @@ class _ChatPageState extends State<ChatPage> {
             ),
       ];
 
-  /// Dedicated skill picker so skills are one tap away (no `/` guessing).
-  void _openSkillsPicker() {
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => _SkillsPickerSheet(
-        skills: _skills,
-        loading: _skillsLoading,
-        onSelect: (skill) {
-          _inputController.text = '\$${skill.name} ';
-          _inputController.selection =
-              TextSelection.collapsed(offset: _inputController.text.length);
-          Navigator.of(context).pop();
-          setState(() => _showSlash = false);
-        },
-        onRefresh: _loadPrep,
-      ),
-    );
-  }
-
   final LayerLink _usageRingLink = LayerLink();
 
   /// LeaderLayer 不是 RenderBox —— 定位 popover 前需从环的 Element 取真实
@@ -1862,7 +1865,8 @@ class _ChatPageState extends State<ChatPage> {
             targetAnchor: right ? Alignment.topRight : Alignment.topLeft,
             followerAnchor:
                 right ? Alignment.bottomRight : Alignment.bottomLeft,
-            offset: const Offset(0, -8),
+            // 官方 GYe：side=top sideOffset=2。
+            offset: const Offset(0, -2),
             showWhenUnlinked: false,
             child: Material(
               color: Colors.transparent,
@@ -1872,18 +1876,19 @@ class _ChatPageState extends State<ChatPage> {
                   color: Theme.of(context).brightness == Brightness.light
                       ? Colors.white
                       : ZColors.darkCard,
-                  borderRadius: BorderRadius.circular(16),
+                  // 官方 `!rounded-xl !shadow-md`（12px）。
+                  borderRadius: BorderRadius.circular(12),
                   border: Border.all(color: ZInk.messageBorder(context)),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.18),
-                      blurRadius: 16,
-                      offset: const Offset(0, 6),
+                      color: Colors.black.withValues(alpha: 0.10),
+                      blurRadius: 6,
+                      offset: const Offset(0, 4),
                     ),
                   ],
                 ),
                 child: ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(12),
                   child: _UsageSheet(
                     state: state,
                     session: widget.session,
@@ -2212,7 +2217,6 @@ class _ChatPageState extends State<ChatPage> {
             voiceWorking: _voiceWorking,
             onSend: _send,
             onAttach: _pickFiles,
-            onSkills: _openSkillsPicker,
             onVoice: _toggleVoiceInput,
             modeChip: _buildModeChip,
             modelChip: _buildModelChip,
@@ -6093,87 +6097,6 @@ class _SlashCommandBar extends StatelessWidget {
   }
 }
 
-class _SkillsPickerSheet extends StatelessWidget {
-  final List<SkillEntry> skills;
-  final bool loading;
-  final void Function(SkillEntry skill) onSelect;
-  final Future<void> Function() onRefresh;
-
-  const _SkillsPickerSheet({
-    required this.skills,
-    required this.loading,
-    required this.onSelect,
-    required this.onRefresh,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final list = skills.where((s) => s.enabled).toList();
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Text('选择 Skills',
-                    style:
-                        TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-                const Spacer(),
-                IconButton(
-                  icon:
-                      Icon(Icons.refresh, size: 18, color: ZInk.muted(context)),
-                  tooltip: '刷新',
-                  onPressed: onRefresh,
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            if (loading)
-              const Padding(
-                padding: EdgeInsets.all(16),
-                child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
-              )
-            else if (list.isEmpty)
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Text('没有可用的 Skills',
-                    style: TextStyle(fontSize: 13, color: ZInk.muted(context))),
-              )
-            else
-              Flexible(
-                child: ListView(
-                  shrinkWrap: true,
-                  children: [
-                    for (final s in list)
-                      ListTile(
-                        dense: true,
-                        leading: const Icon(Icons.auto_awesome_outlined,
-                            size: 18, color: ZColors.warning),
-                        title: Text('\$${s.name}',
-                            style: const TextStyle(
-                                fontSize: 14, fontFamily: 'monospace')),
-                        subtitle: s.description != null
-                            ? Text(s.description!,
-                                style: TextStyle(
-                                    fontSize: 12, color: ZInk.faint(context)),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis)
-                            : null,
-                        onTap: () => onSelect(s),
-                      ),
-                  ],
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _InputBar extends StatefulWidget {
   final TextEditingController controller;
   final bool sending;
@@ -6184,7 +6107,6 @@ class _InputBar extends StatefulWidget {
   final VoidCallback? onStop;
   final VoidCallback onSend;
   final VoidCallback onAttach;
-  final VoidCallback onSkills;
   final VoidCallback onVoice;
 
   /// Inline config dropdowns built by [_ChatPageState] (official-web style:
@@ -6212,7 +6134,6 @@ class _InputBar extends StatefulWidget {
     required this.voiceWorking,
     required this.onSend,
     required this.onAttach,
-    required this.onSkills,
     required this.onVoice,
     required this.modeChip,
     required this.modelChip,
@@ -6241,7 +6162,7 @@ class _InputBarState extends State<_InputBar> {
             borderRadius: BorderRadius.circular(16),
             border: Border.all(color: ZInk.hairline(context)),
           ),
-          padding: const EdgeInsets.fromLTRB(4, 2, 8, 4),
+          padding: const EdgeInsets.fromLTRB(4, 2, 4, 4),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -6263,19 +6184,24 @@ class _InputBarState extends State<_InputBar> {
                         enabledBorder: InputBorder.none,
                         focusedBorder: InputBorder.none,
                         isDense: true,
+                        // 官方输入面 p-3：文字距容器缘 ≈12px（4 容器 + 8 内距）。
                         contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 12),
+                            horizontal: 8, vertical: 12),
                       ),
                       textInputAction: TextInputAction.newline,
                     ),
                   ),
                   if (widget.voiceAvailable)
-                    IconButton(
-                      visualDensity: VisualDensity.compact,
-                      icon: widget.voiceWorking
+                    _ToolbarGhostButton(
+                      tooltip:
+                          widget.voiceRecording ? '停止录音' : '语音输入',
+                      onTap: widget.sending || widget.voiceWorking
+                          ? null
+                          : widget.onVoice,
+                      child: widget.voiceWorking
                           ? const SizedBox(
-                              width: 18,
-                              height: 18,
+                              width: 16,
+                              height: 16,
                               child: CircularProgressIndicator(
                                   strokeWidth: 2),
                             )
@@ -6288,10 +6214,6 @@ class _InputBarState extends State<_InputBar> {
                                   ? ZColors.danger
                                   : ZInk.muted(context),
                             ),
-                      tooltip: widget.voiceRecording ? '停止录音' : '语音输入',
-                      onPressed: widget.sending || widget.voiceWorking
-                          ? null
-                          : widget.onVoice,
                     ),
                 ],
               ),
@@ -6300,23 +6222,26 @@ class _InputBarState extends State<_InputBar> {
               LayoutBuilder(
                 builder: (context, constraints) {
                   final w = constraints.maxWidth;
+                  // 官方工具栏行（vRe）：`flex items-end gap-3`，左
+                  // leading（+菜单/模式 chip）flex-1，右 trailing（用量/
+                  // 模型/思考/发送）同一行 gap-1(4px)，整行 28px 等高。
                   return Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      IconButton(
-                        visualDensity: VisualDensity.compact,
-                        icon: LucideIcon('plus',
-                            size: 16, color: ZInk.muted(context)),
-                        tooltip: '更多操作',
-                        onPressed:
-                            widget.sending ? null : () => _showActions(context),
+                      _PlusMenuButton(
+                        disabled: widget.sending,
+                        onAttach: widget.onAttach,
+                        onTrigger: _insertTrigger,
                       ),
-                      const SizedBox(width: 2),
+                      const SizedBox(width: 4),
                       widget.modeChip(w),
                       const Spacer(),
                       widget.usageRing,
-                      const SizedBox(width: 6),
-                      widget.modelChip(w),
-                      const SizedBox(width: 6),
+                      const SizedBox(width: 4),
+                      // 官方 chips span `min-w-0 shrink`：空间不足时长模型
+                      // 名优先被压缩省略（chip 内 label ellipsis）。
+                      Flexible(child: widget.modelChip(w)),
+                      const SizedBox(width: 4),
                       widget.thoughtChip(w),
                       const SizedBox(width: 4),
                       _SendButton(
@@ -6353,71 +6278,12 @@ class _InputBarState extends State<_InputBar> {
       selection: TextSelection.collapsed(offset: pos + inserted.length),
     );
   }
-
-  void _showActions(BuildContext context) {
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('更多操作',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-              const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  // 官方加号菜单（He 官方截图对照）：附件 / @ 上下文 /
-                  // / 能力 / $ 技能 四项，横向依次排开。
-                  _ActionItem(
-                    icon: Icons.attach_file,
-                    label: '添加附件',
-                    onTap: () {
-                      Navigator.pop(context);
-                      widget.onAttach();
-                    },
-                  ),
-                  _ActionItem(
-                    icon: Icons.alternate_email,
-                    label: '使用 @ 添加上下文',
-                    onTap: () {
-                      Navigator.pop(context);
-                      _insertTrigger('@');
-                    },
-                  ),
-                  _ActionItem(
-                    icon: Icons.terminal,
-                    label: '使用 / 选择能力',
-                    onTap: () {
-                      Navigator.pop(context);
-                      _insertTrigger('/');
-                    },
-                  ),
-                  _ActionItem(
-                    icon: Icons.auto_awesome_outlined,
-                    label: '使用 \$ 选择技能',
-                    onTap: () {
-                      Navigator.pop(context);
-                      widget.onSkills();
-                    },
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }
 
-/// Composer send button — official web style: a solid circle in the ink
-/// color (dark theme: white circle / dark arrow; light: near-black circle /
-/// white arrow), fading when disabled.
+/// Composer send button — official web style (`icon-md` + brand fill):
+/// 28px rounded-lg(8) square in the brand ink color (dark theme: white
+/// tile / dark arrow; light: near-black tile / white arrow), arrow-up
+/// glyph, fading when disabled.
 class _SendButton extends StatelessWidget {
   final bool sending;
 
@@ -6435,12 +6301,17 @@ class _SendButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 官方 bg-brand = 深色主题 #fff / 浅色 #000 的墨色实底；箭头取反色。
+    // 注意 ZInk.solid 是 #DEDEDE/#262626（非纯黑白），必须按亮度判反色，
+    // 不能 == Colors.white（否则白箭头画在浅灰底上不可见）。
     final ink = ZInk.solid(context);
+    final arrowColor =
+        ink.computeLuminance() > 0.5 ? Colors.black : Colors.white;
     return Opacity(
       opacity: sending ? 0.45 : 1,
       child: Material(
         color: ink,
-        shape: const CircleBorder(),
+        borderRadius: BorderRadius.circular(8),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: sending
@@ -6449,25 +6320,21 @@ class _SendButton extends StatelessWidget {
                   ? onStop
                   : onSend,
           child: SizedBox(
-            width: 32,
-            height: 32,
+            width: 28,
+            height: 28,
             child: Center(
               child: sending
                   ? SizedBox(
                       width: 14,
                       height: 14,
                       child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: ZInk.solid(context) == Colors.white
-                            ? Colors.black
-                            : Colors.white,
-                      ),
+                          strokeWidth: 2, color: arrowColor),
                     )
-                  : LucideIcon('arrow-up',
+                  : LucideIcon(
+                      running ? 'circle-stop' : 'arrow-up',
                       size: 16,
-                      color: ZInk.solid(context) == Colors.white
-                          ? Colors.black
-                          : Colors.white),
+                      color: arrowColor,
+                    ),
             ),
           ),
         ),
@@ -6476,42 +6343,192 @@ class _SendButton extends StatelessWidget {
   }
 }
 
-class _ActionItem extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
+/// 28px ghost square button（官方 button `icon-md`: `size-7 rounded-lg`）—
+/// 工具栏行统一高度用，IconButton 默认 40px 命中区会把行撑爆。
+class _ToolbarGhostButton extends StatelessWidget {
+  final Widget child;
+  final String? tooltip;
+  final VoidCallback? onTap;
 
-  const _ActionItem({
-    required this.icon,
-    required this.label,
-    required this.onTap,
+  const _ToolbarGhostButton({
+    required this.child,
+    this.tooltip,
+    this.onTap,
   });
 
   @override
-  Widget build(BuildContext context) => InkWell(
+  Widget build(BuildContext context) {
+    final body = Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
         onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
         child: SizedBox(
-          width: 82,
-          child: Column(
-            children: [
-              Container(
-                width: 52,
-                height: 52,
-                decoration: BoxDecoration(
-                  color: ZColors.primary.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Icon(icon, color: ZColors.primary, size: 25),
-              ),
-              const SizedBox(height: 7),
-              Text(label,
-                  style: const TextStyle(fontSize: 12),
-                  textAlign: TextAlign.center),
-            ],
-          ),
+          width: 28,
+          height: 28,
+          child: Center(child: child),
         ),
-      );
+      ),
+    );
+    if (tooltip == null) return body;
+    return Tooltip(message: tooltip!, child: body);
+  }
+}
+
+/// 官方 composer「+」入口（gRe）：ellipsis 触发按钮（icon-md 28px），
+/// w-52(208px) 菜单从按钮上方、左对齐弹出（align:start side:top，
+/// radix DropdownMenuContent 默认 sideOffset=0），行式菜单项带触发符
+/// mono 小标签（`bg-tooltip-tag`）。
+class _PlusMenuButton extends StatefulWidget {
+  final bool disabled;
+  final VoidCallback onAttach;
+  final void Function(String trigger) onTrigger;
+
+  const _PlusMenuButton({
+    required this.disabled,
+    required this.onAttach,
+    required this.onTrigger,
+  });
+
+  @override
+  State<_PlusMenuButton> createState() => _PlusMenuButtonState();
+}
+
+class _PlusMenuButtonState extends State<_PlusMenuButton> {
+  final _link = LayerLink();
+  OverlayEntry? _entry;
+
+  void _close() {
+    _entry?.remove();
+    _entry = null;
+    if (mounted) setState(() {});
+  }
+
+  void _open() {
+    final overlay = Overlay.of(context, rootOverlay: true);
+    final box = context.findRenderObject() as RenderBox?;
+    final screenW = MediaQuery.sizeOf(context).width;
+    final cardWidth = math.min(208.0, screenW - 16);
+    final left = box?.localToGlobal(Offset.zero).dx ?? 0;
+    final alignRight = left + cardWidth > screenW - 8;
+    _entry = OverlayEntry(
+      builder: (context) => Stack(
+        children: [
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _close,
+              child: const SizedBox.expand(),
+            ),
+          ),
+          CompositedTransformFollower(
+            link: _link,
+            targetAnchor: alignRight ? Alignment.topRight : Alignment.topLeft,
+            followerAnchor:
+                alignRight ? Alignment.bottomRight : Alignment.bottomLeft,
+            showWhenUnlinked: false,
+            child: Material(
+              color: Colors.transparent,
+              child: ComposerMenuCard(
+                maxWidth: cardWidth,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _plusRow(context, 'paperclip', '添加附件', null, () {
+                      _close();
+                      widget.onAttach();
+                    }),
+                    _plusRow(context, 'at-sign', '添加上下文', '@', () {
+                      _close();
+                      widget.onTrigger('@');
+                    }),
+                    _plusRow(context, 'square-slash', '选择能力', '/', () {
+                      _close();
+                      widget.onTrigger('/');
+                    }),
+                    _plusRow(context, 'dollar-sign', '选择技能', r'$', () {
+                      _close();
+                      widget.onTrigger(r'$');
+                    }),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    overlay.insert(_entry!);
+    setState(() {});
+  }
+
+  Widget _plusRow(BuildContext context, String glyph, String label,
+      String? trigger, VoidCallback onTap) {
+    final ink = ZInk.soft(context);
+    final isLight = Theme.of(context).brightness == Brightness.light;
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        child: Row(
+          children: [
+            LucideIcon(glyph, size: 16, color: ink),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(label,
+                  style: TextStyle(fontSize: 13.5, color: ink)),
+            ),
+            if (trigger != null) ...[
+              // 官方 fRe 触发符标签：`rounded bg-tooltip-tag px-1
+              // font-mono text-ui-sm font-medium text-tooltip-tag-foreground`
+              //（深 #363636/#adadad，浅 #e6e6e6/#5c5c5c）。
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                decoration: BoxDecoration(
+                  color: isLight
+                      ? const Color(0xFFE6E6E6)
+                      : const Color(0xFF363636),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  trigger,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontFamily: 'monospace',
+                    fontWeight: FontWeight.w500,
+                    color: isLight
+                        ? const Color(0xFF5C5C5C)
+                        : const Color(0xFFADADAD),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _entry?.remove();
+    _entry = null;
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return CompositedTransformTarget(
+      link: _link,
+      child: _ToolbarGhostButton(
+        tooltip: '更多操作',
+        onTap: widget.disabled ? null : () => _entry == null ? _open() : _close(),
+        child: LucideIcon('ellipsis', size: 16, color: ZInk.muted(context)),
+      ),
+    );
+  }
 }
 
 /// Test-only: representative private chat rows for visual regression
@@ -6577,7 +6594,60 @@ Widget chatRowsGoldenSample() {
           padding: const EdgeInsets.only(left: 4),
           child: feedbackRow(),
         ),
+        const SizedBox(height: 12),
+        // 官方工具栏行（vRe 双组结构）：左 leading（+ 入口/模式 chip）
+        // flex-1，右 trailing（chips+发送）不可压缩、gap-1 —— 整行 28px
+        // 等高；长模型名由 chip 内 label ellipsis 吸收。
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            _ToolbarGhostButton(
+              tooltip: '更多操作',
+              onTap: () {},
+              child: Builder(builder: (c) =>
+                  LucideIcon('ellipsis', size: 16, color: ZInk.muted(c))),
+            ),
+            const SizedBox(width: 4),
+            Builder(builder: (c) => ComposerChip(
+                  icon: Icons.tune,
+                  lucideIcon: modeLucideGlyph('plan'),
+                  label: '计划模式',
+                  menuWidth: 256,
+                  menuBuilder: (_, close) => const SizedBox(),
+                )),
+            const Spacer(),
+            Flexible(
+              child: Builder(builder: (c) => ComposerChip(
+                    icon: Icons.inventory_2_outlined,
+                    label: 'GLM-5.2',
+                    showIcon: false,
+                    sideOffset: 0,
+                    menuBuilder: (_, close) => const SizedBox(),
+                  )),
+            ),
+            const SizedBox(width: 4),
+            Builder(builder: (c) => ComposerChip(
+                  icon: Icons.psychology_outlined,
+                  lucideIcon: 'brain',
+                  label: '思考',
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 6, vertical: 6),
+                  barFill: 0.62,
+                  menuWidth: 224,
+                  menuBuilder: (_, close) => const SizedBox(),
+                )),
+            const SizedBox(width: 4),
+            const _SendButton(
+              sending: false,
+              running: false,
+              onSend: _noop,
+              onStop: null,
+            ),
+          ],
+        ),
       ],
     );
   });
 }
+
+void _noop() {}

@@ -2,6 +2,19 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Changed
+- **Composer 工具栏完整复刻官方（2026-09-09 bundle 全量解密）**：行结构对齐 vRe——单行 `items-end`，左 leading（+ 入口/模式 chip）flex-1，右 trailing（用量环/模型/思考/发送）同行 gap-1(4px)，整行 28px 等高（官方 icon-md/h-7 体系）。
+- **“+”入口官方化**：plus 圆形按钮 + 底部弹层 → ellipsis 28px 幽灵按钮 + 锚定菜单（上方左对齐、208px、radix sideOffset=0），行式菜单项（paperclip/at-sign/square-slash/dollar-sign 官方字形 + 触发符 mono 小标签，tag 底深 #363636/浅 #e6e6e6）。
+- **发送按钮官方形**：32px 圆形 → 28px 圆角方形（icon-md `rounded-lg bg-brand`，brand=深#fff/浅#000 墨色）；修复箭头色按 `== Colors.white` 精确比较导致白箭头画在 #DEDEDE 底上不可见的问题（改亮度判定）。
+- **模式 chip 每模式官方图标（bundle FI 直译）**：yolo/bypass 族 shield-alert（warning 色）、default/build hand、plan notepad-text、auto/agent 族 shield-check；菜单 256px、`side:top align:start sideOffset:4 collisionPadding:8`。
+- **弹出框定位全部对齐官方 side:top**：模型菜单 sideOffset 0 / 思考、模式菜单 4 / 用量 popover 2 + 12px 圆角 + shadow-md / +菜单 0；碰撞翻转按卡宽一半+8px 判定（对齐 radix avoidCollisions 语义）。
+- **菜单卡与菜单行官方外观**：rounded-xl + p-1(4px) + shadow-md 双层；菜单行 min-h-8/pl-2/icon16，选中项不变蓝（文字正常色 + check 图标 subtle）。
+
+### Fixed
+- **窄屏工具栏溢出**：长模型名把工具栏行撑出黄黑溢出条——模型 chip label 官方 `min-w-0 truncate` 语义（ellipsis 吸收）+ chip 外层 Flexible 可压缩；思考竖条只在 384–576 显示（<384 恢复 size-7 方形纯图标）；voice 按钮从 40px IconButton 收为 28px 方形与整行等高；输入面水平边距对称化（文字距缘 ≈12px，官方 p-3 语义）。
+
 ## [0.6.7] - 2026-09-07
 
 ### Fixed

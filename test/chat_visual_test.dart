@@ -57,4 +57,28 @@ void main() {
     expect(find.textContaining('official web ui reverse'),
         findsAtLeastNWidgets(1));
   });
+
+  testWidgets('official toolbar row is 28px tall throughout',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      theme: buildDarkTheme(),
+      home: Scaffold(
+        body: ListView(children: [chatRowsGoldenSample()]),
+      ),
+    ));
+    await tester.pump();
+    // 官方 icon-md / h-7 体系：发送按钮与 + 入口 28px 方形。
+    final send = tester.renderObject<RenderBox>(
+        find.byWidgetPredicate((w) => w is Opacity, description: 'send'));
+    expect(send.size.height, 28);
+    expect(send.size.width, 28);
+    // Tooltip 包裹的 ghost 按钮（28px 方形，四周无边距）。
+    final plusBox = tester.renderObject<RenderBox>(
+        find.byType(SizedBox).last);
+    expect(plusBox.size.height, 28);
+    // chip 文字存在（模式/模型两态；思考竖条态按官方 @xl 前隐藏 label）。
+    expect(find.text('计划模式'), findsOneWidget);
+    expect(find.text('GLM-5.2'), findsOneWidget);
+    expect(find.text('思考'), findsNothing);
+  });
 }

@@ -50,6 +50,22 @@ void main() {
     });
   });
 
+  group('modeLucideGlyph (official per-mode trigger icons, FI)', () {
+    test('bypass family is shield-alert, plan notepad, default hand', () {
+      expect(modeLucideGlyph('yolo'), 'shield-alert');
+      expect(modeLucideGlyph('bypassPermissions'), 'shield-alert');
+      expect(modeLucideGlyph('full-access'), 'shield-alert');
+      expect(modeLucideGlyph('plan'), 'notepad-text');
+      expect(modeLucideGlyph('default'), 'hand');
+      expect(modeLucideGlyph('build'), 'hand');
+      expect(modeLucideGlyph('edit'), 'shield-check');
+      expect(modeLucideGlyph('auto'), 'shield-check');
+      expect(modeLucideGlyph('dontAsk'), 'shield-check');
+      expect(modeLucideGlyph('agent'), 'shield-check');
+      expect(modeLucideGlyph('anything-else'), 'hand');
+    });
+  });
+
   group('goalBannerStatus (official goal semantics)', () {
     test('active states keep the goal visible', () {
       expect(goalBannerStatus(''), (true, null));

@@ -265,6 +265,67 @@ bg-surface px-4 py-3 text-ui-base text-foreground @min-[624px]/conversation:max-
   assistant 反馈/分叉行、长按操作菜单；用量环照常显示（0608 第十一轮曾误隐，
   已恢复——辅助会话快照自带 contextWindow，缺字段时环自动隐藏）。
 
+### Composer 工具栏完整结构（2026-09-09 全量解密：vRe/gRe/OF/VI/II/NZe + 基元）
+
+**行结构（vRe render）**：输入面 `rounded-2xl border input-border bg-input p-3
+transition-colors`（hover 边框变 border-hover，focus-within 变 focused 边框+bg-input-
+focused，底色不变）；输入区下方**单行** `flex items-end gap-3(12px)`：
+- 左 leading `[data-composer-leading-actions]` = `flex min-w-0 flex-1`，内层
+  `[data-composer-leading-content]` `flex shrink-0 gap-1(4px)`：+ 菜单按钮
+  （gRe，ellipsis，icon-md 28px）→ 模式 chip（S2e/II）→ Computer Use 按钮
+  （xVe，Zemote 无此功能）→ 后台任务按钮（kBe：terminal+N bot+N 计数，
+  `@max-[480px]/composer` 起切紧凑单图标——480 是新增容器断点）。
+- 右 trailing `flex items-center gap-1.5(6px)`：[编辑态取消按钮 secondary
+  icon-md] → submitControl `div.flex.min-w-0.items-center.gap-1` =
+  **chips span（`flex min-w-0 shrink gap-1 overflow-hidden empty:hidden`：
+  用量环+模型 chip+思考 chip）+ 发送按钮** —— chips 与发送同一行、可被压缩。
+
+**按钮尺寸表（button chunk variants）**：default=h-7(28) gap-1 px-2、xs=h-5、
+sm=h-6、lg=h-8、icon=size-7、icon-xs=size-5、icon-sm=size-6、**icon-md=size-7(28px)
+rounded-lg + svg size-4(16)**、icon-lg=size-8。chips/发送/+ 菜单/voice 全部
+icon-md 或 h-7 —— **整行 28px 等高**。
+
+**发送按钮（icon-md）**：`gap-1 rounded-lg bg-brand text-ui-base
+text-foreground-inverse hover:bg-brand/80`，arrow-up size-4 / 提交中 loader
+转圈；brand = 深色 #fff / 浅色 #000（zai 主题用墨色，非 sky）。编辑态换成
+secondary 取消按钮（square 图标 fill-current，Esc tooltip）。
+
+**“+”菜单（gRe）**：ellipsis 触发（icon-md）→ DropdownMenu `align:start
+side:top` **sideOffset=0**（radix 默认）`w-52(208px)`；项：paperclip 添加附件
+（无 tag）、at-sign「使用 @ …」（tag @）、square-slash「使用 / …」（tag /）、
+dollar-sign「使用 $ …」（tag $）；tag = `rounded bg-tooltip-tag px-1 font-mono
+text-ui-sm font-medium text-tooltip-tag-foreground`（tag 底深 #363636/浅
+#e6e6e6，字深 #adadad/浅 #5c5c5c）；触发符在文案内嵌（fRe）。
+
+**模式 chip（S2e/II）**：**每模式专属图标（FI，非统一 sliders-horizontal）**
+——bypass/full-access/yolo → shield-alert（+文字 warning 色 expanded 态）；
+default/build → hand；plan → notepad-text；auto/acceptEdits/agent/autoEdit/
+dontAsk/edit → shield-check；缺省 hand。compact：<@xl(576) `size-7 justify-center
+gap-0 p-0`（chevron hidden）；≥@xl `h-7 w-fit justify-between gap-1 pl-2 pr-1.5`。
+菜单 w-64(256)、item min-h-13 两行（名称+描述）。
+
+**弹出框定位汇总（He 点名）——全部 side:top 从触发器上方弹出**：
+| 弹层 | side | align | sideOffset | collisionPadding | 宽 |
+|---|---|---|---|---|---|
+| 用量 popover（GYe） | top | 默认 | **2** | 默认0 | w-80(320) `!rounded-xl !shadow-md` |
+| 模型菜单（OF→Qe） | top | start | **0**（默认） | 默认 | w-48(192)/分组 w-max min-w-48 max-w-[100vw-2rem] max-h-72 |
+| 思考菜单（VI→$r） | top | start | **4** | **8** | 默认 min-w-32 自适应 |
+| 模式菜单（II→$r） | top | start | **4** | **8** | w-64(256) |
+| +菜单（gRe→Qe） | top | start | **0**（默认） | 默认 | w-52(208) |
+菜单容器基元：`z-[60] rounded-xl(12) border-popover-border bg-menu p-1
+!shadow-md`，动画 100ms fade+zoom-95+按方向 slide-2；radix avoidCollisions
+（越右缘翻 align，越上缘翻 side）。用量环触屏语义：pointerDown 且 hover:none
+立即开（不等 tap）。
+
+**菜单行**：min-h-8(32) pl-2 pr-8 图标 size-4；选中项**不变蓝**——文字正常
+foreground + check 图标 `text-foreground-subtle`；模型分组 provider 行无图标
+（仅文字+badge）；footer（管理模型）sticky bottom bg-menu。
+
+**主题补充**：foreground-subtle=深 #d4d4d499/浅 #26262699（60% alpha）；
+foreground-inverse=深#000/浅#fff；success #46bf72/#1e8a3e；warning
+#ff8a30/#e07b00；menu-hover #363636/#f0f0f0。
+
+（以下为 0707 轮解密，断点与 OF/VI 细节仍有效：）
 ### Composer 工具栏断点（容器查询，2026-09-07 第二轮解密；OF/VI 组件 0707 晚三轮补全）
 
 composer 容器名 `composer/inline-size`，Tailwind v4 容器档位（**容器宽**，

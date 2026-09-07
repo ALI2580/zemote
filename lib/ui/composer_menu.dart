@@ -29,6 +29,9 @@ Map<String, List<ConfigOptionValue>> groupModelOptions(
 /// One row inside a composer menu card.
 class ComposerMenuEntry {
   final IconData? icon;
+
+  /// Official lucide glyph (takes precedence over [icon]).
+  final String? lucideIcon;
   final String title;
   final String? subtitle;
   final bool selected;
@@ -36,6 +39,7 @@ class ComposerMenuEntry {
 
   const ComposerMenuEntry({
     this.icon,
+    this.lucideIcon,
     required this.title,
     this.subtitle,
     this.selected = false,
@@ -78,6 +82,19 @@ class ComposerChip extends StatefulWidget {
   final double? barFill;
   final String? tooltip;
 
+  /// Trigger inner padding. Official OF/VI/S2e triggers differ per chip:
+  /// model `pl-2 pr-1.5` (8/6), thought `px-1.5 py-1.5` (6/6), mode
+  /// `pl-2 pr-1.5` when expanded. null = the model form (8/6).
+  final EdgeInsetsGeometry? padding;
+
+  /// Dropdown card width in px (official: model w-48 flat / w-max grouped,
+  /// mode w-64, plus-menu w-52). Clamped to screen width internally.
+  final double menuWidth;
+
+  /// Vertical gap between trigger top and card bottom (official radix
+  /// sideOffset: model/plus menus 0, thought/mode menus 4).
+  final double sideOffset;
+
   /// Builds the dropdown content. [close] dismisses the menu — call it
   /// before running the selected action so the overlay tears down first.
   final Widget Function(BuildContext context, VoidCallback close) menuBuilder;
@@ -97,6 +114,9 @@ class ComposerChip extends StatefulWidget {
     this.showIcon = true,
     this.barFill,
     this.tooltip,
+    this.padding,
+    this.menuWidth = 288,
+    this.sideOffset = 4,
   });
 
   @override
@@ -114,13 +134,14 @@ class _ComposerChipState extends State<ComposerChip> {
       return;
     }
     final overlay = Overlay.of(context, rootOverlay: true);
-    // 官方 radix popper 的碰撞翻转：chip 落在屏幕右半时菜单改为右对齐，
-    // 卡片宽度钳制到屏宽内，避免模型/思考菜单从右侧溢出。
+    // 官方 radix popper 的碰撞翻转（avoidCollisions + collisionPadding 8）：
+    // 菜单从 chip 左缘向右展开，卡片会越出右缘时翻转为右对齐，宽度钳制
+    // 到屏宽内。
     final box = context.findRenderObject() as RenderBox?;
     final screenW = MediaQuery.sizeOf(context).width;
     final rightEdge = box != null ? box.localToGlobal(Offset.zero).dx + box.size.width : 0.0;
-    final alignRight = screenW - rightEdge < 180;
-    final cardWidth = math.min(288.0, screenW - 16);
+    final cardWidth = math.min(widget.menuWidth, screenW - 16);
+    final alignRight = screenW - rightEdge < cardWidth / 2 + 8;
     _entry = OverlayEntry(
       builder: (context) => Stack(
         children: [
@@ -136,7 +157,7 @@ class _ComposerChipState extends State<ComposerChip> {
             targetAnchor: alignRight ? Alignment.topRight : Alignment.topLeft,
             followerAnchor:
                 alignRight ? Alignment.bottomRight : Alignment.bottomLeft,
-            offset: const Offset(0, -6),
+            offset: Offset(0, -widget.sideOffset),
             showWhenUnlinked: false,
             child: Material(
               color: Colors.transparent,
@@ -179,7 +200,7 @@ class _ComposerChipState extends State<ComposerChip> {
       ),
       padding: square
           ? EdgeInsets.zero
-          : const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          : (widget.padding ?? const EdgeInsets.symmetric(horizontal: 8, vertical: 6)),
       height: square ? 28 : null,
       width: square ? 28 : null,
       alignment: square ? Alignment.center : null,
@@ -206,9 +227,15 @@ class _ComposerChipState extends State<ComposerChip> {
                       fontSize: widget.fontSize, color: chipColor)),
             ],
             SizedBox(width: widget.showIcon || widget.prefixLabel != null ? 5 : 0),
-            Text(widget.label,
-                style: TextStyle(
-                    fontSize: widget.fontSize, color: chipColor)),
+            // 官方 label `min-w-0 truncate`：长模型名在窄 composer 内
+            // 优先被压缩省略，不把工具栏行撑爆。
+            Flexible(
+              child: Text(widget.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: widget.fontSize, color: chipColor)),
+            ),
             const SizedBox(width: 2),
             LucideIcon('chevron-down', size: 14, color: chipColor),
           ],
@@ -269,9 +296,9 @@ class _ThoughtLevelBar extends StatelessWidget {
   }
 }
 
-/// Dropdown card container (dark: near-black, light: white — panel tones).
-/// [maxWidth] clamps the card to the available screen width so menus never
-/// overflow narrow composers.
+/// Dropdown card container — official radix menu/popover surface:
+/// `rounded-xl border border-popover-border bg-menu p-1 !shadow-md`.
+/// [maxWidth] is the card width (already clamped to screen by the chip).
 class ComposerMenuCard extends StatelessWidget {
   final Widget child;
   final double maxWidth;
@@ -282,27 +309,37 @@ class ComposerMenuCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: math.min(288.0, maxWidth),
+      width: maxWidth,
       constraints: const BoxConstraints(maxHeight: 420),
       decoration: BoxDecoration(
         color: ZInk.panel(context),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: ZInk.panelBorder(context)),
         boxShadow: [
+          // tailwind shadow-md（双层）
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.35),
-            blurRadius: 24,
-            offset: const Offset(0, 8),
+            color: Colors.black.withValues(alpha: 0.10),
+            blurRadius: 6,
+            offset: const Offset(0, 4),
+          ),
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
           ),
         ],
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [child],
+        child: Padding(
+          // 官方 p-1：卡内 4px，菜单行自带 pl-2(8)。
+          padding: const EdgeInsets.all(4),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [child],
+            ),
           ),
         ),
       ),
@@ -324,15 +361,20 @@ class ComposerMenuRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ink = entry.selected ? ZColors.primary : ZInk.soft(context);
+    // 官方菜单项（select item / dropdown item）：正文正常墨色（选中不变
+    // 蓝），check 图标 subtle；min-h-8、pl-2 pr-8、图标 size-4。
+    final ink = ZInk.soft(context);
     return InkWell(
       onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
         child: Row(
           children: [
-            if (entry.icon != null) ...[
-              Icon(entry.icon, size: 17, color: ink),
+            if (entry.lucideIcon != null) ...[
+              LucideIcon(entry.lucideIcon!, size: 16, color: ink),
+              const SizedBox(width: 10),
+            ] else if (entry.icon != null) ...[
+              Icon(entry.icon, size: 16, color: ink),
               const SizedBox(width: 10),
             ],
             Expanded(
@@ -343,7 +385,7 @@ class ComposerMenuRow extends StatelessWidget {
                       style: TextStyle(
                           fontSize: 13.5,
                           fontWeight: entry.selected
-                              ? FontWeight.w600
+                              ? FontWeight.w500
                               : FontWeight.w400,
                           color: ink)),
                   if (entry.subtitle != null) ...[
@@ -370,7 +412,7 @@ class ComposerMenuRow extends StatelessWidget {
             ],
             if (entry.selected) ...[
               const SizedBox(width: 8),
-              Icon(Icons.check, size: 16, color: ZColors.primary),
+              LucideIcon('check', size: 16, color: ZInk.muted(context)),
             ] else ...[
               if (trailing != null) trailing!,
             ],
@@ -453,7 +495,6 @@ class _ComposerModelMenuBodyState extends State<ComposerModelMenuBody> {
       }
       rows.add(ComposerMenuRow(
         entry: ComposerMenuEntry(
-          icon: Icons.album_outlined,
           title: provider,
           subtitle: current != null
               ? '当前 · ${current.name}'

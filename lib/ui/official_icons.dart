@@ -153,6 +153,42 @@ const Map<String, LucideIconData> kOfficialIcons = {
     LucideShape('c', ['6','18','3','false']),
     LucideShape('p', ['M18 9a9 9 0 0 1-9 9']),
   ]),
+  "at-sign": LucideIconData("at-sign", [
+    LucideShape('c', ['12','12','4','false']),
+    LucideShape('p', ['M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8']),
+  ]),
+  "square-slash": LucideIconData("square-slash", [
+    LucideShape('r', ['3','3','18','18','2']),
+    LucideShape('l', ['9','15','15','9']),
+  ]),
+  "dollar-sign": LucideIconData("dollar-sign", [
+    LucideShape('l', ['12','2','12','22']),
+    LucideShape('p', ['M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6']),
+  ]),
+  "hand": LucideIconData("hand", [
+    LucideShape('p', ['M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2']),
+    LucideShape('p', ['M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2']),
+    LucideShape('p', ['M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8']),
+    LucideShape('p', ['M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15']),
+  ]),
+  "notepad-text": LucideIconData("notepad-text", [
+    LucideShape('p', ['M8 2v4']),
+    LucideShape('p', ['M12 2v4']),
+    LucideShape('p', ['M16 2v4']),
+    LucideShape('r', ['4','4','16','18','2']),
+    LucideShape('p', ['M8 10h6']),
+    LucideShape('p', ['M8 14h8']),
+    LucideShape('p', ['M8 18h5']),
+  ]),
+  "shield-check": LucideIconData("shield-check", [
+    LucideShape('p', ['M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z']),
+    LucideShape('p', ['m9 12 2 2 4-4']),
+  ]),
+  "shield-alert": LucideIconData("shield-alert", [
+    LucideShape('p', ['M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z']),
+    LucideShape('p', ['M12 8v4']),
+    LucideShape('p', ['M12 16h.01']),
+  ]),
 };
 
 /// Renders an official lucide icon: 24x24 grid, stroke 2, round caps/joins,
