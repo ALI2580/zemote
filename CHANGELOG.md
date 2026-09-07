@@ -2,7 +2,7 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [0.6.8] - 2026-09-07
 
 ### Changed
 - **Composer 工具栏完整复刻官方（2026-09-09 bundle 全量解密）**：行结构对齐 vRe——单行 `items-end`，左 leading（+ 入口/模式 chip）flex-1，右 trailing（用量环/模型/思考/发送）同行 gap-1(4px)，整行 28px 等高（官方 icon-md/h-7 体系）。
