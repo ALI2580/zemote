@@ -109,6 +109,46 @@ changesGroup→utt、executeGroup→mtt、default→Dq。
 - subagent（not）：**一行 subtle 小字** `类型 · 状态 — 摘要`
   （`text-ui-sm text-foreground-subtle`），无卡片无图标。
 
+### 状态面板 / summaryPanel（2026-09-07 第三轮解密）
+
+官方**没有「会话工作台」概念**（i18n 零命中），对应物是 `chat.summaryPanel` +
+`chat.statusPanel`——一个悬浮 aside，不是消息流内卡片：
+
+- **摆放**：`aside` `absolute top-0 z-20 pt-4`，`inline` 档 `right-4`，
+  `auto` 档 `inset-x-0 flex justify-end px-4`（@min-1280px 有宽屏微调）。
+  悬浮在会话区右上角、盖在流上方（z-20），不占排版空间。
+- **容器**：`relative overflow-hidden rounded-2xl border border-popover-border
+  bg-popover text-foreground shadow-md`，transition 300ms。
+- **两档形态**：mini 胶囊 `inline-flex max-h-8.5 w-[--chat-summary-panel-mini-width]
+  max-w-[calc(100vw-1.5rem)] flex-col`（高 34px）；面板 `flex max-h-[min(64dvh,32rem)]
+  w-80 max-w-[calc(100vw-1.5rem)] flex-col`（320px 宽）。`data-state`
+  mini=collapsed / panel=expanded。
+- **displayMode 三档设置**（`chat.summaryPanel.displayMode*`）：自动展开 auto /
+  始终收起 collapsed / 始终展开 expanded；胶囊↔面板切换键
+  `showMini`「收起为胶囊」/ `showPanel`「展开状态」。
+- **面板条目**（statusPanel.*）：目标 goal、计划 sessionPlans（打开计划：{title}）、
+  更改 changes（git，干净 clean）、分支 branch、终端 terminals、
+  智能体 agents（N 运行/已结束）、后台 {count} 个后台运行 + 停止、
+  进程/todo 折叠组（当前任务 / 已完成 N 项 / 待处理 N 项 / 前面 N 项 / 后面 N 项）。
+  summaryPanel 另有 todoSessionGroup「整个会话」/ todoGoalIterationGroup「第 N 轮迭代」。
+- **后台任务**：composer 侧还有 ariaLabel「打开运行中的后台任务：Bash {bashCount} 个，
+  子智能体 {subagentCount} 个」；agent 工具行状态「后台运行中，正在同步输出/等待输出」、
+  「后台 Agent 过程」；feedback.background.* 是点赞反馈的后台处理提示（另一回事）。
+- **计划面板**（planTool.panel.*）：展开/收起计划、复制计划、计划已复制、
+  在侧边栏查看计划（open in side pane）、查看完整计划、当前模式 {mode}、
+  切换模式、正在同步计划…、暂时还没有结构化步骤。、计划/原始数据 双 tab。
+- **待办**（todo.panel.*）：待办 / 当前任务 / todo 已完成 / 切换待办面板（todo 工具行
+  默认隐藏，内容进面板，不在消息流渲染）。
+
+Zemote 落地（2026-09-07）：`_ConversationInsights` 常驻「会话工作台」卡整体废弃
+（官方无此物），改为 `_StatusSummaryOverlay` 挂在消息列表 Stack 右上角
+（top 8 / right 12）：auto 策略（有计划步骤或后台任务才显示）→ mini 胶囊
+（高 34px，计划 N/M + N 后台）→ 点开展开面板（宽 min(320, vw-24)、max-h
+min(64dvh,512px)、rounded-16、popover 底+hairline+阴影，标题「状态」+收起为胶囊），
+内含 计划/文件变更/后台任务 三个可展开 section（复用 _PlanSummary/_FileSummary/
+_BackgroundWorkList，后者 ListView→Column 适配无界高度）。displayMode 设置项
+与 git changes/branch/terminals 条目未做（移动端无 git 上下文，后续按需）。
+
 ### 变更摘要卡（changeSummary）
 
 容器 `rounded-xl border border-border bg-card`，头部行 `h-10 px-2
@@ -224,22 +264,42 @@ bg-surface px-4 py-3 text-ui-base text-foreground @min-[624px]/conversation:max-
 - Zemote 落地：ChatPage.isSideChat → 隐藏 turnHeader（本轮完成·用时）、goal 横幅、
   assistant 反馈/分叉行、长按操作菜单；用量环照常显示。
 
-### Composer 工具栏断点（容器查询，2026-09-07 第二轮解密）
+### Composer 工具栏断点（容器查询，2026-09-07 第二轮解密；OF/VI 组件 0707 晚三轮补全）
 
 composer 容器名 `composer/inline-size`，Tailwind v4 容器档位（**容器宽**，
 非视口宽；移动端等效=窗口宽）：
 `@max-sm` <24rem=384px、`@sm` ≥384、`@lg` ≥512、`@xl` ≥576、`@2xl` ≥672。
 
-各 chip 形态（右侧组）：
-- **模型 chip（OF）**：<384px → size-7 方形纯图标（icon 类 `inline-flex @sm:hidden`）；
-  ≥384px → 图标+模型名（label `hidden @sm:inline-flex`）；≥672px → 模型名前
-  追加供应商前缀（prefix `hidden @2xl:inline`）。
-- **思考强度 chip（VI）**：<384px → 纯图标；384–576px → 图标+**绿色竖条**
-  （`w-1`(4px) 全高圆角条，轨道 `bg-current/10`，填充 `bg-success` 从底部
-  长出，`transition-[height]`）；≥576px → 图标+文本标签（竖条隐藏）。
-  竖条填充高度 `F = max(0, idx+1-off) / max(1, len-off)`：选项先按强度
-  rank 排序（off 族 0 / low 1 / medium 2 / high 3 / enabled 4 / xhigh 5 /
-  max 6），off 选项填 0，enabled 档位按名次进度填充。
+各 chip 形态（右侧组；触发按钮公共类 `gap-1 rounded-lg px-1.5 py-1.5 text-ui-base`）：
+- **模型 chip（OF，lucide `package` 图标）**：
+  - `<384`：`@max-sm/composer:size-7 justify-center gap-0 p-0` 28px 方形，
+    图标显示（`triggerIconClassName: inline-flex @sm/composer:hidden`），
+    label/chevron 均隐 → 纯图标。
+  - `≥384`：**图标隐藏**（icon 只在 <384 出现！），label 显示
+    （`labelVisibilityClassName: hidden @sm/composer:inline-flex`）+
+    chevron（`indicatorClassName: hidden @sm/composer:block`，size-3.5
+    text-foreground-subtle）。
+  - `≥672`：label 前追加供应商前缀 `{providerName}/`（DF 渲染器，
+    `triggerLabelPrefixClassName: hidden @2xl/composer:inline`）。
+    前缀逻辑 PAe：providerName 为空或 providerId 是一方（ja()，builtin/glm）
+    → 无前缀。aria/title 用 fullLabel。
+  - tooltip 固定 = `chat.toolbar.model.label`「选择模型」。
+  - pending 切换时 label 换 pendingLabel + 转圈 `animate-spin size-3.5`。
+- **思考强度 chip（VI，lucide `brain` 图标 size-4 text-current 常显）**：
+  - `<384`：同上 size-7 方形 → 纯图标。
+  - `384–576`：图标+**绿色竖条**：`relative w-1 self-stretch overflow-hidden
+    rounded-full bg-current/10`（全高≈16px），填充 `absolute bottom-0 w-full
+    rounded-full bg-success transition-[height] duration-300
+    ease-[cubic-bezier(0.34,1.56,0.64,1)]`（300ms 回弹），`F>0 → min-h-1`(4px)。
+    显示条件 `hidden @sm/composer:inline-flex @xl/composer:hidden`。
+  - `≥576`：竖条隐藏，label 显示（`min-w-0 whitespace-nowrap` +
+    `hidden @xl/composer:inline-flex`）；chevron `hidden @xl/composer:block`。
+  - 填充公式：`F=(D?0:max(0,O+1-P))/max(1,w.length-P)`，P=off 选项数
+    （WZe 过滤器），O=当前项 index（zI 按 rank 排序后）。
+  - tooltip：label 可见时 = label 文本，不可见时 =
+    `chat.toolbar.thoughtLevel.tooltip`「思考级别」。
+  - value→i18n：HZe[RI(value)]（RI 归一化，UZe 同构）；单选项时无 popover
+    （data-thought-level-fixed）。
 - **模式 chip**：<576px → size-7 纯图标；≥576px → 图标+文本。
 - 工具条左右分组：左 = 附加/更多 + 模式 chip；右 = 用量环 + 模型 + 思考
   （+ 模式），`justify-end`。
@@ -248,6 +308,14 @@ composer 容器名 `composer/inline-size`，Tailwind v4 容器档位（**容器�
   ——desktop shell（侧边栏）出现在宽度 ≥768px **或**非触屏设备。
   Zemote 有意下调到 640dp 以覆盖折叠屏窄展开态（~690dp）与 8 寸平板横屏
   （~640dp）；主从布局 720dp（列表 360 + 聊天 ≥360）。
+
+Zemote 落地（0707 晚）：ComposerChip 增 `showIcon`/`prefixLabel`/方形
+iconOnly（28×28 居中零内边距）/`_ThoughtLevelBar`（AnimatedFractionallySizedBox +
+Cubic(0.34,1.56,0.64,1) 300ms + 4px 最小填充）；模型 chip 图标
+radio_button→`Icons.inventory_2_outlined`（package），<384 图标、384-672 纯文字
+（无图标！）、≥672 `{provider}/` 前缀（builtin/glm 豁免，`_modelPrefixAndLabel`），
+tooltip「选择模型」；思考 chip 竖条改全高动画，tooltip 按官方动态（<576「思考级别」
+/≥576 档位文本）。
 
 ## 待挖清单（下次抓取时继续）
 
@@ -259,3 +327,4 @@ composer 容器名 `composer/inline-size`，Tailwind v4 容器档位（**容器�
 - [ ] skill mention 的 value 字段内容（`Xx(e,t)` 的 t 来源）。
 - [x] ~~用量环 / 上下文明细 / 缓存命中率~~（2026-09-07 已解密，见「用量环形圈」节）。
 - [x] ~~辅助对话语义~~（2026-09-07 已解密，见「辅助对话」节）。
+- [x] ~~状态面板/summaryPanel（工作台对应物）~~（2026-09-07 已解密，见「状态面板」节）。

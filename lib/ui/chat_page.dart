@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -316,6 +317,7 @@ Color _fullAccessInkFor(BuildContext context) =>
 /// its green level bar between @sm and @xl; text labels return at @xl.
 const double _composerSm = 384;
 const double _composerXl = 576;
+const double _composer2xl = 672;
 
 /// Official thought-level intensity rank (`HZe`): off-family 0 → max 6.
 /// Unknown values sort last (99).
@@ -1384,6 +1386,29 @@ class _ChatPageState extends State<ChatPage> {
     return v.substring(idx + 1);
   }
 
+  /// 官方模型 chip 文字逻辑（PAe + OF 调用点，2026-09-07 解密）：
+  /// ≥384px 显示模型名；≥672px 追加 `{供应商名}/` 前缀（`hidden
+  /// @2xl/composer:inline`）。内置/一方供应商（builtin、glm）无前缀
+  /// （镜像 ja() 判定）。返回 (前缀, 模型名)。
+  (String?, String) get _modelPrefixAndLabel {
+    final v = _currentModelValue;
+    for (final o in _modelOption?.options ?? const <ConfigOptionValue>[]) {
+      if (o.value == v) {
+        final provider = o.modelProviderName?.trim();
+        final seg = v.contains('/')
+            ? v.substring(0, v.lastIndexOf('/'))
+            : '';
+        final firstParty = seg.isEmpty ||
+            seg.startsWith('builtin') ||
+            seg == 'glm' ||
+            provider == null ||
+            provider.isEmpty;
+        return (firstParty ? null : '$provider/', o.name);
+      }
+    }
+    return (null, _currentModelLabel);
+  }
+
   String get _currentModeLabel {
     final option = _modeOption;
     for (final o in option?.options ?? const <ConfigOptionValue>[]) {
@@ -1602,16 +1627,21 @@ class _ChatPageState extends State<ChatPage> {
   Widget _buildModelChip() {
     final option = _modelOption;
     final available = option != null && option.options.isNotEmpty;
-    // 官方模型 chip：<@sm 只有 icon，≥@sm 显示模型名。
-    final iconOnly = MediaQuery.sizeOf(context).width < _composerSm;
+    // 官方模型 chip（OF 调用点）：<384px = size-7 方形纯图标（package）；
+    // ≥384px 图标隐藏、显示模型名+chevron；≥672px 模型名前追加供应商
+    // 前缀。tooltip 固定「选择模型」（chat.toolbar.model.label）。
+    final width = MediaQuery.sizeOf(context).width;
+    final (prefix, modelLabel) = _modelPrefixAndLabel;
     return ComposerChip(
-      icon: Icons.radio_button_checked_outlined,
+      icon: Icons.inventory_2_outlined,
       label: available || _currentModelLabel.isNotEmpty
-          ? _currentModelLabel
+          ? modelLabel
           : '模型',
+      prefixLabel: width >= _composer2xl ? prefix : null,
       enabled: available,
-      iconOnly: iconOnly,
-      tooltip: '模型 · $_currentModelLabel',
+      iconOnly: width < _composerSm,
+      showIcon: width < _composerSm,
+      tooltip: '选择模型',
       menuBuilder: (context, close) => ComposerModelMenuBody(
         options: option!.options,
         currentModelValue: _currentModelValue,
@@ -1625,8 +1655,10 @@ class _ChatPageState extends State<ChatPage> {
 
   Widget _buildThoughtChip() {
     final entries = _thoughtMenuEntries();
-    // 官方思考 chip：<@sm 只有 icon；@sm..@xl 图标+绿色竖条（填充高度=
-    // 档位进度）；≥@xl 图标+文本标签。
+    // 官方思考 chip（VI）：<384px 只有 brain 图标（size-7 方形）；
+    // 384–576px 图标+绿色竖条（填充高度=档位进度）；≥576px 图标+文本
+    // 标签（竖条隐藏）。tooltip：标签不可见时「思考级别」，可见时为
+    // 档位文本（官方 N = labelVisible ? label : tooltip 键）。
     final width = MediaQuery.sizeOf(context).width;
     final iconOnly = width < _composerSm;
     final values = <String>[
@@ -1643,7 +1675,9 @@ class _ChatPageState extends State<ChatPage> {
       barFill: !iconOnly && width < _composerXl && values.isNotEmpty
               ? thoughtBarFill(values, _currentThoughtValue)
               : null,
-      tooltip: '思考强度 · $_currentThoughtLabel',
+      tooltip: width >= _composerXl
+          ? _currentThoughtLabel
+          : '思考级别',
       menuBuilder: (context, close) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
@@ -1879,7 +1913,9 @@ class _ChatPageState extends State<ChatPage> {
               ),
             ),
           Expanded(
-            child: state == null
+            child: Stack(
+              children: [
+            state == null
                 ? Center(
                     child: _sessionId == null
                         ? Column(
@@ -2007,6 +2043,23 @@ class _ChatPageState extends State<ChatPage> {
                           );
                         },
                       ),
+                if (!widget.isSideChat && state != null)
+                  Positioned(
+                    top: 8,
+                    right: 12,
+                    child: AnimatedBuilder(
+                      animation: state,
+                      builder: (context, _) => _StatusSummaryOverlay(
+                        state: state,
+                        transport: _transport,
+                        sessionId: _sessionId ?? '',
+                        rpcPlan: _planData,
+                        onOpenPlan: _showPlansSheet,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
           _ReconnectBanner(bridge: _transport.session),
           if (state != null)
@@ -2017,13 +2070,6 @@ class _ChatPageState extends State<ChatPage> {
                 children: [
                   if (!widget.isSideChat) _GoalBanner(state: state),
                   _ActiveExecutionBar(state: state),
-                  _ConversationInsights(
-                    state: state,
-                    transport: _transport,
-                    sessionId: _sessionId ?? '',
-                    rpcPlan: _planData,
-                    onOpenPlan: _showPlansSheet,
-                  ),
                   _QueueBar(state: state, transport: _transport),
                   _PendingInteractions(state: state, transport: _transport),
                 ],
@@ -3224,6 +3270,59 @@ class _FeedbackButton extends StatelessWidget {
   }
 }
 
+/// 官方 `animated-gradient-text`：running/streaming 状态下标签文字的
+/// 流光渐变（背景 200% 宽 + 位移循环）。用 ShaderMask + 无限位移的
+/// 线性渐变模拟，A-B-A 对称配色保证无缝循环。
+class _AnimatedGradientText extends StatefulWidget {
+  final String text;
+  final Color base;
+  final TextStyle style;
+
+  const _AnimatedGradientText({
+    required this.text,
+    required this.base,
+    required this.style,
+  });
+
+  @override
+  State<_AnimatedGradientText> createState() => _AnimatedGradientTextState();
+}
+
+class _AnimatedGradientTextState extends State<_AnimatedGradientText>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 2400),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final highlight = Color.lerp(widget.base, Colors.white, 0.45)!;
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) => ShaderMask(
+        shaderCallback: (bounds) {
+          final t = _controller.value;
+          return LinearGradient(
+            colors: [widget.base, highlight, widget.base],
+            begin: Alignment(-1 - 4 * t, 0),
+            end: Alignment(3 - 4 * t, 0),
+          ).createShader(bounds);
+        },
+        blendMode: BlendMode.srcIn,
+        child: child,
+      ),
+      child: Text(widget.text, style: widget.style),
+    );
+  }
+}
+
 class _ReasoningTile extends StatefulWidget {
   final String text;
   final bool streaming;
@@ -3311,11 +3410,18 @@ class _ReasoningTileState extends State<_ReasoningTile> {
                           ? ZColors.running
                           : ZInk.faint(context)),
                   const SizedBox(width: 7),
-                  Text(
-                    widget.streaming ? '思考中…' : '思考',
-                    style: TextStyle(
-                        fontSize: 13, color: ZInk.muted(context)),
-                  ),
+                  // 官方流式头部 = animated-gradient-text + 「正在思考」。
+                  if (widget.streaming)
+                    _AnimatedGradientText(
+                      text: '正在思考',
+                      base: ZColors.running,
+                      style: const TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w500),
+                    )
+                  else
+                    Text('思考',
+                        style: TextStyle(
+                            fontSize: 13, color: ZInk.muted(context))),
                   if (!widget.streaming) ...[
                     const SizedBox(width: 7),
                     Text('·',
@@ -3331,10 +3437,11 @@ class _ReasoningTileState extends State<_ReasoningTile> {
                     opacity: _chevronVisible ? 1 : 0,
                     duration: const Duration(milliseconds: 250),
                     child: AnimatedRotation(
-                      turns: _expanded ? 0.5 : 0,
+                      // 官方 chevron：默认朝右，展开 rotate-90。
+                      turns: _expanded ? 0.25 : 0,
                       duration: const Duration(milliseconds: 150),
-                      child: Icon(Icons.expand_more,
-                          size: 15, color: ZInk.faint(context)),
+                      child: Icon(Icons.chevron_right,
+                          size: 16, color: ZInk.faint(context)),
                     ),
                   ),
                 ],
@@ -3343,13 +3450,13 @@ class _ReasoningTileState extends State<_ReasoningTile> {
           ),
           if (_expanded)
             Padding(
-              padding: const EdgeInsets.only(top: 4, left: 8),
+              padding: const EdgeInsets.only(top: 8, left: 8),
               child: Container(
-                padding: const EdgeInsets.only(left: 10),
+                padding: const EdgeInsets.only(left: 14),
                 decoration: BoxDecoration(
                   border: Border(
                     left: BorderSide(
-                        width: 2, color: ZInk.messageBorder(context)),
+                        width: 1, color: ZInk.messageBorder(context)),
                   ),
                 ),
                 child: ZemoteMarkdown(widget.text, fontSize: 12),
@@ -3445,6 +3552,7 @@ class _ToolCallTileState extends State<_ToolCallTile> {
     'Bash': '终端',
     'TodoWrite': '待办',
     'Task': '任务',
+    'AskUserQuestion': '询问',
   };
 
   /// Per-family icons like the official web client (terminal / magnifier /
@@ -3462,11 +3570,35 @@ class _ToolCallTileState extends State<_ToolCallTile> {
     'Glob': Icons.folder_open,
     'TodoWrite': Icons.checklist,
     'Task': Icons.account_tree_outlined,
+    'AskUserQuestion': Icons.help_outline,
   };
 
   String get _kindLabel {
     final toolName = widget.row['toolName'] as String? ?? '';
+    // 官方 ask-user-question 家族（Mrt）：kindLabel 随状态切换为
+    // 「正在询问 / 已询问」。
+    if (toolName == 'AskUserQuestion') {
+      final status = widget.row['status'] as String? ?? '';
+      final running = status == 'running' ||
+          status == 'inputStreaming' ||
+          status == 'pendingApproval';
+      return running ? '正在询问' : '已询问';
+    }
     return _kindLabels[toolName] ?? toolName;
+  }
+
+  /// ask-user-question 的输入里通常带 questions 数组（官方 secondary =
+  /// 「N 个问题」）。
+  int get _questionCount {
+    final inputText = widget.row['inputText'] as String? ?? '';
+    if (inputText.isEmpty) return 0;
+    try {
+      final input = jsonDecode(inputText);
+      if (input is Map && input['questions'] is List) {
+        return (input['questions'] as List).length;
+      }
+    } catch (_) {}
+    return 0;
   }
 
   /// Primary summary: a file path / command / pattern from the structured
@@ -3483,7 +3615,7 @@ class _ToolCallTileState extends State<_ToolCallTile> {
     }
     if (input is Map) {
       for (final key in ['filePath', 'file_path', 'path', 'command',
-        'pattern', 'url', 'query', 'description']) {
+        'pattern', 'url', 'query', 'question', 'description']) {
         final v = input[key];
         if (v is String && v.isNotEmpty) {
           return v.replaceAll('\n', ' ');
@@ -3502,13 +3634,16 @@ class _ToolCallTileState extends State<_ToolCallTile> {
       'pendingApproval' => '等待确认',
       'pending' => '等待中',
       'error' || 'failed' => '执行失败',
+      'rejected' => '已拒绝',
+      'stopped' => '已停止',
       _ => null,
     };
     final color = switch (status) {
       'running' || 'inputStreaming' => ZColors.running,
       'pendingApproval' => ZColors.warning,
       'pending' => ZInk.faint(context),
-      'error' || 'failed' => ZColors.danger,
+      'error' || 'failed' || 'rejected' => ZColors.danger,
+      'stopped' => ZInk.faint(context),
       _ => ZInk.faint(context),
     };
     return (label, color);
@@ -3573,14 +3708,23 @@ class _ToolCallTileState extends State<_ToolCallTile> {
               size: 14,
               color: running ? ZColors.running : ZInk.faint(context)),
           const SizedBox(width: 7),
-          Text(
-            _kindLabel,
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
-              color: running ? ZColors.running : ZInk.muted(context),
+          // 官方 running 时 kindLabel 用 animated-gradient-text。
+          if (running)
+            _AnimatedGradientText(
+              text: _kindLabel,
+              base: ZColors.running,
+              style: const TextStyle(
+                  fontSize: 13, fontWeight: FontWeight.w500),
+            )
+          else
+            Text(
+              _kindLabel,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: ZInk.muted(context),
+              ),
             ),
-          ),
           if (primary.isNotEmpty) ...[
             const SizedBox(width: 7),
             Text('·', style: TextStyle(fontSize: 12, color: ZInk.faint(context))),
@@ -3607,6 +3751,11 @@ class _ToolCallTileState extends State<_ToolCallTile> {
                       fontSize: 12,
                       color: ZInk.diffRemoved(context))),
             ],
+            if (_questionCount > 1) ...[
+              const SizedBox(width: 8),
+              Text('$_questionCount 个问题',
+                  style: TextStyle(fontSize: 12, color: ZInk.faint(context))),
+            ],
           ],
           if (statusLabel != null)
             Padding(
@@ -3620,10 +3769,11 @@ class _ToolCallTileState extends State<_ToolCallTile> {
               opacity: _chevronVisible ? 1 : 0,
               duration: const Duration(milliseconds: 250),
               child: AnimatedRotation(
-                turns: _expanded ? 0.5 : 0,
+                // 官方 chevron：默认朝右，展开 rotate-90。
+                turns: _expanded ? 0.25 : 0,
                 duration: const Duration(milliseconds: 150),
-                child: Icon(Icons.expand_more,
-                    size: 15, color: ZInk.faint(context)),
+                child: Icon(Icons.chevron_right,
+                    size: 16, color: ZInk.faint(context)),
               ),
             ),
           ],
@@ -3654,13 +3804,13 @@ class _ToolCallTileState extends State<_ToolCallTile> {
           ),
           if (_expanded && hasDetails)
             Padding(
-              padding: const EdgeInsets.only(top: 4, left: 8),
+              padding: const EdgeInsets.only(top: 8, left: 8),
               child: Container(
-                padding: const EdgeInsets.only(left: 10),
+                padding: const EdgeInsets.only(left: 14),
                 decoration: BoxDecoration(
                   border: Border(
                     left: BorderSide(
-                        width: 2, color: ZInk.messageBorder(context)),
+                        width: 1, color: ZInk.messageBorder(context)),
                   ),
                 ),
                 child: Column(
@@ -3714,19 +3864,24 @@ class _ToolCallTileState extends State<_ToolCallTile> {
           if (structured is Map || structured is List)
             StructuredDataView(data: structured, maxDepth: 3)
           else
+            // 官方原始输出 fallback：`px-4 py-3 rounded-xl bg-surface
+            // max-h-50 overflow-auto`——限高滚动而非截断。
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.all(8),
+              constraints: const BoxConstraints(maxHeight: 200),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
               decoration: BoxDecoration(
-                color: ZInk.codeBlockBg(context),
-                borderRadius: BorderRadius.circular(8),
+                color: ZInk.messageSurface(context),
+                borderRadius: BorderRadius.circular(12),
               ),
-              child: SelectableText(
-                value.length > 4000 ? '${value.substring(0, 4000)}…' : value,
-                style: TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 11,
-                    color: ZInk.solid(context)),
+              child: SingleChildScrollView(
+                child: SelectableText(
+                  value.length > 20000 ? '${value.substring(0, 20000)}…' : value,
+                  style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 11,
+                      color: ZInk.solid(context)),
+                ),
               ),
             ),
         ],
@@ -3850,8 +4005,8 @@ class _ChangeSummaryCardState extends State<_ChangeSummaryCard> {
                       AnimatedRotation(
                         turns: _expanded ? 0.25 : 0,
                         duration: const Duration(milliseconds: 150),
-                        child: Icon(Icons.expand_more,
-                            size: 14, color: ZInk.faint(context)),
+                        child: Icon(Icons.chevron_right,
+                            size: 12, color: ZInk.faint(context)),
                       ),
                       const SizedBox(width: 8),
                       Expanded(
@@ -4367,14 +4522,21 @@ class _PlanBanner extends StatelessWidget {
   }
 }
 
-class _ConversationInsights extends StatefulWidget {
+/// 官方 summaryPanel（`chat.summaryPanel.*`，2026-09-07 bundle 解密）：
+/// 悬浮在会话区右上角的「状态」面板（absolute top-0 right-4 z-20），不占
+/// 消息流。形态两档——mini 胶囊（`max-h-8.5 rounded-2xl bg-popover
+/// shadow-md`，迷你值如「{count} 后台」）与展开面板（`w-80
+/// max-h-[min(64dvh,32rem)]` 圆角 2xl）。官方 displayMode 有
+/// 自动展开/始终收起/始终展开三档；Zemote 取 auto：有活动内容
+/// （计划步骤/后台任务）才出现胶囊，无事整个隐藏。
+class _StatusSummaryOverlay extends StatefulWidget {
   final ConversationState state;
   final ConversationTransport transport;
   final String sessionId;
   final Object? rpcPlan;
   final VoidCallback onOpenPlan;
 
-  const _ConversationInsights({
+  const _StatusSummaryOverlay({
     required this.state,
     required this.transport,
     required this.sessionId,
@@ -4383,12 +4545,16 @@ class _ConversationInsights extends StatefulWidget {
   });
 
   @override
-  State<_ConversationInsights> createState() => _ConversationInsightsState();
+  State<_StatusSummaryOverlay> createState() => _StatusSummaryOverlayState();
 }
 
-class _ConversationInsightsState extends State<_ConversationInsights> {
+class _StatusSummaryOverlayState extends State<_StatusSummaryOverlay> {
   Object? _fileData;
   bool _loadingFiles = false;
+  bool _expanded = false;
+  bool _planExpanded = true;
+  bool _filesExpanded = false;
+  bool _worksExpanded = false;
 
   Future<void> _loadFiles() async {
     if (_loadingFiles || widget.sessionId.isEmpty) return;
@@ -4425,206 +4591,258 @@ class _ConversationInsightsState extends State<_ConversationInsights> {
       snapshotPlan: widget.state.plan ?? widget.rpcPlan,
     );
     final works = widget.state.backgroundWorks;
-    final hasPlan = (steps?.isNotEmpty ?? false) ||
-        widget.state.currentMode == 'plan' ||
-        widget.rpcPlan != null;
-    final fileSummary = summarizeFileChanges(_fileData);
-    final completed = steps?.where((step) => step.completed).length ?? 0;
-    return Container(
-      margin: const EdgeInsets.fromLTRB(14, 5, 14, 4),
-      padding: const EdgeInsets.fromLTRB(12, 9, 8, 9),
-      decoration: BoxDecoration(
-        color: ZInk.panel(context),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: ZInk.panelBorder(context)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 30,
-            height: 30,
-            decoration: BoxDecoration(
-              color: ZColors.primary.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(9),
-            ),
-            child: const Icon(Icons.dashboard_customize_outlined,
-                size: 17, color: ZColors.primary),
-          ),
-          const SizedBox(width: 9),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+    final hasPlan = steps?.isNotEmpty ?? false;
+    final hasWorks = works.isNotEmpty;
+    // auto 策略：无事发生时整个隐藏（旧版常驻卡不再占位）。
+    if (!hasPlan && !hasWorks) return const SizedBox.shrink();
+
+    final popover = Theme.of(context).brightness == Brightness.light
+        ? ZColors.composerLight
+        : ZColors.composerDark;
+    final decoration = BoxDecoration(
+      color: popover,
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: ZInk.panelBorder(context)),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withValues(alpha: 0.16),
+          blurRadius: 14,
+          offset: const Offset(0, 4),
+        ),
+      ],
+    );
+
+    if (!_expanded) {
+      // mini 胶囊：官方 max-h-8.5（34px）。
+      return Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(17),
+          onTap: () => setState(() => _expanded = true),
+          child: Container(
+            height: 34,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: decoration,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Text('会话工作台',
+                if (hasPlan) ...[
+                  const Icon(Icons.account_tree_outlined,
+                      size: 13, color: ZColors.primary),
+                  const SizedBox(width: 5),
+                  Text(
+                    '计划 ${steps!.where((s) => s.completed).length}/${steps.length}',
                     style: TextStyle(
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w600,
-                        color: ZInk.solid(context))),
-                const SizedBox(height: 2),
-                Text(
-                  [
-                    hasPlan ? '计划 $completed/${steps?.length ?? 0}' : '暂无计划',
-                    fileSummary == null
-                        ? '文件未检查'
-                        : '文件 ${fileSummary.files} · +${fileSummary.additions} / -${fileSummary.deletions}',
-                    works.isEmpty ? '无后台任务' : '${works.length} 个后台任务',
-                  ].join(' · '),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 10.5, color: ZInk.muted(context)),
-                ),
+                        fontSize: 11.5, color: ZInk.solid(context)),
+                  ),
+                ],
+                if (hasPlan && hasWorks) const SizedBox(width: 10),
+                if (hasWorks) ...[
+                  Icon(
+                    Icons.pending_actions_outlined,
+                    size: 13,
+                    color: works.any((w) =>
+                            '${w['status'] ?? ''}' == 'running' ||
+                            '${w['status'] ?? ''}' == 'in_progress')
+                        ? ZColors.running
+                        : ZInk.muted(context),
+                  ),
+                  const SizedBox(width: 5),
+                  Text('${works.length} 后台',
+                      style: TextStyle(
+                          fontSize: 11.5, color: ZInk.solid(context))),
+                ],
+                const SizedBox(width: 6),
+                Icon(Icons.expand_more, size: 14, color: ZInk.faint(context)),
               ],
             ),
           ),
-          _WorkbenchAction(
-            tooltip: '计划',
-            icon: Icons.account_tree_outlined,
-            active: hasPlan,
-            badge: steps?.isNotEmpty == true ? '${steps!.length}' : null,
-            onTap: () => _openWorkbench(context, 0, steps ?? const [], works),
-          ),
-          _WorkbenchAction(
-            tooltip: '文件变更',
-            icon: Icons.difference_outlined,
-            active: fileSummary != null && fileSummary.files > 0,
-            loading: _loadingFiles,
-            badge: fileSummary == null ? null : '${fileSummary.files}',
-            onTap: () => _openFiles(context, steps ?? const [], works),
-          ),
-          _WorkbenchAction(
-            tooltip: '后台任务',
-            icon: Icons.pending_actions_outlined,
-            active: works.isNotEmpty,
-            badge: works.isEmpty ? null : '${works.length}',
-            onTap: () => _openWorkbench(context, 2, steps ?? const [], works),
-          ),
-        ],
-      ),
-    );
-  }
+        ),
+      );
+    }
 
-  Future<void> _openFiles(BuildContext context, List<PlanStep> steps,
-      List<Map<String, dynamic>> works) async {
-    if (_fileData == null) await _loadFiles();
-    if (context.mounted) _openWorkbench(context, 1, steps, works);
-  }
-
-  void _openWorkbench(BuildContext context, int index, List<PlanStep> steps,
-      List<Map<String, dynamic>> works) {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (context) => DefaultTabController(
-        length: 3,
-        initialIndex: index,
-        child: FractionallySizedBox(
-          heightFactor: 0.72,
-          child: Column(
-            children: [
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text('会话工作台',
-                      style:
-                          TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
-                ),
-              ),
-              const TabBar(
-                tabs: [
-                  Tab(text: '计划'),
-                  Tab(text: '文件'),
-                  Tab(text: '后台任务'),
+    // 展开面板：官方 w-80（320px）max-h-[min(64dvh,32rem)] 圆角 2xl。
+    final size = MediaQuery.sizeOf(context);
+    final done = steps?.where((s) => s.completed).length ?? 0;
+    final fileSummary = summarizeFileChanges(_fileData);
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        width: math.min(320, size.width - 24),
+        constraints: BoxConstraints(
+          maxHeight: math.min(size.height * 0.64, 512),
+        ),
+        decoration: decoration,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 6, 4, 0),
+              child: Row(
+                children: [
+                  Text('状态',
+                      style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                          color: ZInk.solid(context))),
+                  const Spacer(),
+                  IconButton(
+                    tooltip: '收起为胶囊',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => setState(() => _expanded = false),
+                    icon: Icon(Icons.unfold_less,
+                        size: 18, color: ZInk.muted(context)),
+                  ),
                 ],
               ),
-              Expanded(
-                child: TabBarView(
+            ),
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    SingleChildScrollView(
-                      padding: const EdgeInsets.all(16),
-                      child: _PlanSummary(
-                        steps: steps,
-                        isPlanMode: widget.state.currentMode == 'plan',
-                        onOpenRaw: widget.onOpenPlan,
+                    if (hasPlan) ...[
+                      _sectionRow(
+                        context,
+                        icon: Icons.account_tree_outlined,
+                        iconColor: ZColors.primary,
+                        title: '计划',
+                        trailing: '$done/${steps!.length}',
+                        expanded: _planExpanded,
+                        onTap: () =>
+                            setState(() => _planExpanded = !_planExpanded),
                       ),
+                      if (_planExpanded) ...[
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+                          child: _PlanSummary(
+                            steps: steps,
+                            isPlanMode: widget.state.currentMode == 'plan',
+                            onOpenRaw: widget.onOpenPlan,
+                          ),
+                        ),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton(
+                            onPressed: widget.onOpenPlan,
+                            style: TextButton.styleFrom(
+                              visualDensity: VisualDensity.compact,
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 6),
+                            ),
+                            child: const Text('查看原始数据',
+                                style: TextStyle(fontSize: 11)),
+                          ),
+                        ),
+                      ],
+                      _divider(context),
+                    ],
+                    _sectionRow(
+                      context,
+                      icon: Icons.difference_outlined,
+                      iconColor: ZInk.muted(context),
+                      title: '文件变更',
+                      trailing: fileSummary == null
+                          ? '未检查'
+                          : '${fileSummary.files} · +${fileSummary.additions} / -${fileSummary.deletions}',
+                      loading: _loadingFiles,
+                      expanded: _filesExpanded,
+                      onTap: () {
+                        setState(() => _filesExpanded = !_filesExpanded);
+                        if (_filesExpanded && _fileData == null) _loadFiles();
+                      },
                     ),
-                    SingleChildScrollView(
-                      padding: const EdgeInsets.all(16),
-                      child: _FileSummary(
-                        data: _fileData,
-                        loading: _loadingFiles,
-                        onLoad: () async {
-                          Navigator.pop(context);
-                          await _openFiles(this.context, steps, works);
-                        },
+                    if (_filesExpanded)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+                        child: _FileSummary(
+                          data: _fileData,
+                          loading: _loadingFiles,
+                          onLoad: _loadFiles,
+                        ),
                       ),
+                    _divider(context),
+                    _sectionRow(
+                      context,
+                      icon: Icons.pending_actions_outlined,
+                      iconColor: hasWorks
+                          ? ZColors.running
+                          : ZInk.muted(context),
+                      title: '后台任务',
+                      trailing: '${works.length} 个运行',
+                      expanded: _worksExpanded,
+                      onTap: () =>
+                          setState(() => _worksExpanded = !_worksExpanded),
                     ),
-                    _BackgroundWorkList(works: works),
+                    if (_worksExpanded)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(4, 0, 4, 4),
+                        child: _BackgroundWorkList(works: works),
+                      ),
                   ],
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
   }
-}
 
-class _WorkbenchAction extends StatelessWidget {
-  final String tooltip;
-  final IconData icon;
-  final bool active;
-  final bool loading;
-  final String? badge;
-  final VoidCallback onTap;
+  Widget _divider(BuildContext context) => Divider(
+        height: 1,
+        thickness: 0.5,
+        indent: 12,
+        endIndent: 12,
+        color: ZInk.panelBorder(context),
+      );
 
-  const _WorkbenchAction({
-    required this.tooltip,
-    required this.icon,
-    required this.active,
-    required this.onTap,
-    this.loading = false,
-    this.badge,
-  });
-
-  @override
-  Widget build(BuildContext context) => Tooltip(
-        message: tooltip,
-        child: Stack(
-          clipBehavior: Clip.none,
+  Widget _sectionRow(
+    BuildContext context, {
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    String? trailing,
+    bool loading = false,
+    required bool expanded,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        child: Row(
           children: [
-            IconButton(
-              visualDensity: VisualDensity.compact,
-              onPressed: onTap,
-              icon: loading
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 1.7),
-                    )
-                  : Icon(icon,
-                      size: 19,
-                      color: active ? ZColors.primary : ZInk.muted(context)),
+            Icon(icon, size: 15, color: iconColor),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(title,
+                  style:
+                      TextStyle(fontSize: 12.5, color: ZInk.solid(context))),
             ),
-            if (badge != null)
-              Positioned(
-                right: 2,
-                top: 1,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  decoration: BoxDecoration(
-                    color: active ? ZColors.primary : ZInk.faint(context),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(badge!,
-                      style: const TextStyle(fontSize: 8, color: Colors.white)),
-                ),
-              ),
+            if (loading)
+              const SizedBox(
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(strokeWidth: 1.5),
+              )
+            else if (trailing != null)
+              Text(trailing,
+                  style: TextStyle(fontSize: 11, color: ZInk.muted(context))),
+            const SizedBox(width: 6),
+            AnimatedRotation(
+              turns: expanded ? 0.25 : 0,
+              duration: const Duration(milliseconds: 150),
+              child: Icon(Icons.chevron_right,
+                  size: 14, color: ZInk.faint(context)),
+            ),
           ],
         ),
-      );
+      ),
+    );
+  }
 }
 
 class _PlanSummary extends StatelessWidget {
@@ -4747,28 +4965,40 @@ class _BackgroundWorkList extends StatelessWidget {
             style: TextStyle(fontSize: 12, color: ZInk.muted(context))),
       );
     }
-    return ListView.separated(
-      padding: const EdgeInsets.all(16),
-      itemCount: works.length,
-      separatorBuilder: (_, __) => const Divider(height: 1),
-      itemBuilder: (context, index) {
-        final work = works[index];
-        final status = '${work['status'] ?? '运行中'}';
-        final running = status == 'running' || status == 'in_progress';
-        return ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: Icon(running ? Icons.sync : Icons.task_alt,
-              size: 19, color: running ? ZColors.primary : ZColors.success),
-          title: Text('${work['title'] ?? work['kind'] ?? '后台任务'}',
-              style: const TextStyle(fontSize: 13)),
-          subtitle: Text(status,
-              style: TextStyle(fontSize: 11, color: ZInk.muted(context))),
-          trailing: work['progress'] is num
-              ? Text('${((work['progress'] as num) * 100).round()}%',
-                  style: TextStyle(fontSize: 11, color: ZInk.muted(context)))
-              : null,
-        );
-      },
+    // 状态面板内嵌在 SingleChildScrollView 里，用 Column 而非 ListView
+    // （无界高度会挂掉）。
+    return Column(
+      children: [
+        for (final (index, work) in works.indexed) ...[
+          if (index > 0)
+            Divider(height: 1, indent: 12, endIndent: 12, color: ZInk.panelBorder(context)),
+          ListTile(
+            dense: true,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+            leading: Icon(
+                '${work['status'] ?? ''}' == 'running' ||
+                        '${work['status'] ?? ''}' == 'in_progress'
+                    ? Icons.sync
+                    : Icons.task_alt,
+                size: 18,
+                color: '${work['status'] ?? ''}' == 'running' ||
+                        '${work['status'] ?? ''}' == 'in_progress'
+                    ? ZColors.running
+                    : ZColors.success),
+            title: Text('${work['title'] ?? work['kind'] ?? '后台任务'}',
+                style: const TextStyle(fontSize: 12.5)),
+            subtitle: Text('${work['status'] ?? '运行中'}',
+                style: TextStyle(fontSize: 11, color: ZInk.muted(context))),
+            trailing: work['progress'] is num
+                ? Text('${((work['progress'] as num) * 100).round()}%',
+                    style: TextStyle(
+                        fontSize: 11,
+                        fontFamily: 'monospace',
+                        color: ZInk.muted(context)))
+                : null,
+          ),
+        ],
+      ],
     );
   }
 }

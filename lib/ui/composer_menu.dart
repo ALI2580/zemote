@@ -43,18 +43,29 @@ class ComposerMenuEntry {
 /// Anchored toolbar chip with a dropdown card pinned above it (official-web
 /// composer style). The chip owns its overlay; tapping outside closes it.
 ///
-/// Narrow-composer variants (official container-query behavior): [iconOnly]
-/// drops the label and chevron for a square icon button; [barFill] renders
-/// the thought-level vertical bar instead of the label (official shows the
-/// bar between 384–576px composer widths, green fill = level progress).
+/// Narrow-composer variants (official container-query behavior, decoded from
+/// the OF/VI components): [iconOnly] renders a 28px square centered icon
+/// button (`@max-sm:size-7 justify-center gap-0 p-0`); [showIcon]=false
+/// reproduces the model chip's `triggerIconClassName:hidden @sm/composer:hidden`
+/// (icon only below 384px, label+chevron above); [barFill] renders the
+/// thought-level vertical bar (official VI: full-height 4px track
+/// `bg-current/10`, success fill growing from the bottom with a 300ms
+/// spring curve, 4px minimum visible fill, shown 384–576px only).
 class ComposerChip extends StatefulWidget {
   final IconData icon;
   final String label;
+
+  /// Optional provider prefix rendered before [label] (official model chip
+  /// `triggerLabelPrefix`, e.g. `供应商/` — shown ≥672px only by the caller).
+  final String? prefixLabel;
   final Color? labelColor;
   final double iconSize;
   final double fontSize;
   final bool enabled;
   final bool iconOnly;
+
+  /// false = official model-chip text form (no leading icon at all).
+  final bool showIcon;
 
   /// 0..1 — fill height of the vertical level bar; null hides the bar.
   final double? barFill;
@@ -69,11 +80,13 @@ class ComposerChip extends StatefulWidget {
     required this.icon,
     required this.label,
     required this.menuBuilder,
+    this.prefixLabel,
     this.labelColor,
     this.iconSize = 15,
     this.fontSize = 13,
     this.enabled = true,
     this.iconOnly = false,
+    this.showIcon = true,
     this.barFill,
     this.tooltip,
   });
@@ -144,37 +157,33 @@ class _ComposerChipState extends State<ComposerChip> {
         color: _open ? ZInk.tile(context) : Colors.transparent,
         borderRadius: BorderRadius.circular(8),
       ),
-      padding: EdgeInsets.symmetric(
-          horizontal: widget.iconOnly ? 6 : 8, vertical: 6),
+      // 官方 <384px 触发器：size-7(28px) 方形、居中、gap-0、p-0。
+      padding: widget.iconOnly
+          ? EdgeInsets.zero
+          : const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      height: widget.iconOnly ? 28 : null,
+      width: widget.iconOnly ? 28 : null,
+      alignment: widget.iconOnly ? Alignment.center : null,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(widget.icon, size: widget.iconSize, color: chipColor),
-          // 官方思考强度竖条（@sm..@xl 区间）：4px 宽圆角条，success 绿从
-          // 底部填充，填充高度 = 当前档位在已启用档位中的进度。
+          if (widget.showIcon)
+            Icon(widget.icon, size: widget.iconSize, color: chipColor),
+          // 官方思考强度竖条（VI，@sm..@xl）：w-1 全高圆角轨道
+          // bg-current/10，success 填充自底部长出，300ms 弹性曲线，
+          // 填充 >0 时至少 4px 可见（min-h-1）。
           if (showBar) ...[
-            const SizedBox(width: 6),
-            Container(
-              width: 4,
-              height: 18,
-              decoration: BoxDecoration(
-                color: chipColor.withValues(alpha: 0.10),
-                borderRadius: BorderRadius.circular(2),
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(2),
-                child: Align(
-                  alignment: Alignment.bottomCenter,
-                  child: FractionallySizedBox(
-                    heightFactor: widget.barFill!.clamp(0.0, 1.0),
-                    child: Container(color: ZColors.success),
-                  ),
-                ),
-              ),
-            ),
+            SizedBox(width: widget.showIcon ? 6 : 0),
+            _ThoughtLevelBar(fill: widget.barFill!),
           ],
           if (!widget.iconOnly && widget.barFill == null) ...[
-            const SizedBox(width: 5),
+            if (widget.prefixLabel != null) ...[
+              SizedBox(width: widget.showIcon ? 5 : 0),
+              Text(widget.prefixLabel!,
+                  style: TextStyle(
+                      fontSize: widget.fontSize, color: chipColor)),
+            ],
+            SizedBox(width: widget.showIcon || widget.prefixLabel != null ? 5 : 0),
             Text(widget.label,
                 style: TextStyle(
                     fontSize: widget.fontSize, color: chipColor)),
@@ -192,6 +201,46 @@ class _ComposerChipState extends State<ComposerChip> {
           borderRadius: BorderRadius.circular(8),
           onTap: widget.enabled ? _toggle : null,
           child: chip,
+        ),
+      ),
+    );
+  }
+}
+
+/// 思考强度竖条：官方 `transition-[height] duration-300
+/// ease-[cubic-bezier(0.34,1.56,0.64,1)]`——300ms 回弹曲线（Flutter 的
+/// Cubic 同参），填充 >0 时最小 4px（min-h-1）。
+class _ThoughtLevelBar extends StatelessWidget {
+  final double fill;
+
+  const _ThoughtLevelBar({required this.fill});
+
+  @override
+  Widget build(BuildContext context) {
+    const trackColor = Color(0x1A000000);
+    return Container(
+      width: 4,
+      height: 15,
+      decoration: BoxDecoration(
+        color: Theme.of(context).brightness == Brightness.light
+            ? trackColor
+            : const Color(0x1AFFFFFF),
+        borderRadius: BorderRadius.circular(2),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(2),
+        child: Align(
+          alignment: Alignment.bottomCenter,
+          child: AnimatedFractionallySizedBox(
+            duration: const Duration(milliseconds: 300),
+            curve: const Cubic(0.34, 1.56, 0.64, 1),
+            alignment: Alignment.bottomCenter,
+            heightFactor: fill <= 0
+                ? 0
+                : (fill.clamp(0.0, 1.0) < 4 / 15 ? 4 / 15 : fill)
+                    .clamp(0.0, 1.0),
+            child: Container(color: ZColors.success),
+          ),
         ),
       ),
     );
