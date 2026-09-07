@@ -3257,7 +3257,7 @@ class _AssistantBubble extends StatelessWidget {
                   ),
                   _FeedbackButton(
                     icon: Icons.fork_right,
-                    lucideIcon: 'split',
+                    lucideIcon: 'git-branch',
                     active: false,
                     onTap: () {
                       if (sessionId.isEmpty) return;
@@ -3319,17 +3319,17 @@ class _FeedbackButton extends StatelessWidget {
   }
 }
 
-/// 官方 `animated-gradient-text`：running/streaming 状态下标签文字的
-/// 流光渐变（背景 200% 宽 + 位移循环）。用 ShaderMask + 无限位移的
-/// 线性渐变模拟，A-B-A 对称配色保证无缝循环。
+/// 官方 `.animated-gradient-text`（index-BM2ndL2ru.css 实抓）：
+/// linear-gradient(90deg, strong 0/34/66/100%, soft 50%)，background-size
+/// 300%，`gradient-flow` 4s linear——前 2s 从 position 100% 扫到 0，
+/// 后 2s 停驻。strong = 正文色（深 #fff / 浅 #0d0d0d），soft = 同色
+/// 20%~22% 透明度（官方 --animated-gradient-text-soft）。
 class _AnimatedGradientText extends StatefulWidget {
   final String text;
-  final Color base;
   final TextStyle style;
 
   const _AnimatedGradientText({
     required this.text,
-    required this.base,
     required this.style,
   });
 
@@ -3341,7 +3341,7 @@ class _AnimatedGradientTextState extends State<_AnimatedGradientText>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 2400),
+    duration: const Duration(seconds: 4),
   )..repeat();
 
   @override
@@ -3352,21 +3352,30 @@ class _AnimatedGradientTextState extends State<_AnimatedGradientText>
 
   @override
   Widget build(BuildContext context) {
-    final highlight = Color.lerp(widget.base, Colors.white, 0.45)!;
+    final isLight = Theme.of(context).brightness == Brightness.light;
+    final strong = isLight ? const Color(0xFF0D0D0D) : Colors.white;
+    final softAlpha = isLight ? 0.22 : 0.20;
+    final soft = strong.withValues(alpha: softAlpha);
     return AnimatedBuilder(
       animation: _controller,
-      builder: (context, child) => ShaderMask(
-        shaderCallback: (bounds) {
-          final t = _controller.value;
-          return LinearGradient(
-            colors: [widget.base, highlight, widget.base],
-            begin: Alignment(-1 - 4 * t, 0),
-            end: Alignment(3 - 4 * t, 0),
-          ).createShader(bounds);
-        },
-        blendMode: BlendMode.srcIn,
-        child: child,
-      ),
+      builder: (context, child) {
+        final t = _controller.value;
+        // background-position 100% -> 0%（前半程扫过），随后停驻。
+        final q = (t / 0.5).clamp(0.0, 1.0);
+        return ShaderMask(
+          shaderCallback: (bounds) {
+            final w = bounds.width;
+            final origin = -2 * w * (1 - q);
+            return LinearGradient(
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+              colors: [strong, strong, soft, strong, strong],
+              stops: const [0.0, 0.34, 0.5, 0.66, 1.0],
+            ).createShader(Rect.fromLTWH(origin, 0, w * 3, bounds.height));
+          },
+          child: child,
+        );
+      },
       child: Text(widget.text, style: widget.style),
     );
   }
@@ -3458,14 +3467,13 @@ class _ReasoningTileState extends State<_ReasoningTile> {
                   if (widget.streaming)
                     _AnimatedGradientText(
                       text: '正在思考',
-                      base: ZColors.running,
                       style: const TextStyle(
                           fontSize: 13, fontWeight: FontWeight.w500),
                     )
                   else
                     Text('思考',
                         style: TextStyle(
-                            fontSize: 13, color: ZInk.muted(context))),
+                            fontSize: 13, color: ZInk.faint(context))),
                   if (!widget.streaming) ...[
                     const SizedBox(width: 7),
                     Text('·',
@@ -3474,7 +3482,7 @@ class _ReasoningTileState extends State<_ReasoningTile> {
                     const SizedBox(width: 7),
                     Text('持续了几秒',
                         style: TextStyle(
-                            fontSize: 13, color: ZInk.muted(context))),
+                            fontSize: 13, color: ZInk.faint(context))),
                   ],
                   const SizedBox(width: 6),
                   AnimatedOpacity(
@@ -3756,7 +3764,6 @@ class _ToolCallTileState extends State<_ToolCallTile> {
           if (running)
             _AnimatedGradientText(
               text: _kindLabel,
-              base: ZColors.running,
               style: const TextStyle(
                   fontSize: 13, fontWeight: FontWeight.w500),
             )
@@ -3766,7 +3773,8 @@ class _ToolCallTileState extends State<_ToolCallTile> {
               style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w500,
-                color: ZInk.muted(context),
+                // 已执行行比进行中更浅（官方 subtlest 层级）。
+                color: ZInk.faint(context),
               ),
             ),
           if (primary.isNotEmpty) ...[
@@ -3776,7 +3784,11 @@ class _ToolCallTileState extends State<_ToolCallTile> {
             Flexible(
               child: Text(
                 primary,
-                style: TextStyle(fontSize: 13, color: ZInk.muted(context)),
+                style: TextStyle(
+                    fontSize: 13,
+                    color: running
+                        ? ZInk.soft(context)
+                        : ZInk.faint(context)),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
