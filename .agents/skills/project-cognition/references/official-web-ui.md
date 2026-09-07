@@ -348,3 +348,29 @@ tooltip「选择模型」；思考 chip 竖条改全高动画，tooltip 按官�
   协议 goal 状态枚举含 completedSuccess（Zemote 曾把它原文渲染出来）。
   终态不常驻横幅，结果走 goalVerify 时间线标记。
 - **用户消息编辑**：官方在原气泡内原地编辑（inline），无独立对话框。
+
+### 流光真身与工具族图标（2026-09-08，v0.6.6 批）
+
+- **样式真身在 CSS 资产里**（`assets/index-BMndL2ru.css`，只抓 JS 拿不到）：
+  `.animated-gradient-text{background:linear-gradient(90deg, strong 0%, strong 34%,
+  soft 50%, strong 66%, strong 100%); color:#0000; background-size:300% 100%;
+  animation:4s linear infinite gradient-flow}`，
+  `@keyframes gradient-flow{0%{background-position:100% 0}50%{background-position:0 0}to{0 0}}`
+  ——前 2s 扫过后 2s 停驻。变量：dark strong=#fff soft=#ffffff38（实测 20%）；
+  light strong=#0d0d0d soft=#0d0d0d38。另有 `.animated-gradient-text-subtle`
+  （strong=foreground-subtle）。
+- **层级**：进行中行=foreground 墨色+流光标签；已完成行=`text-foreground-subtlest`
+  （更浅）。
+- **turnHeader 时长**（BX 函数）：`activeMs ?? max(endedAt-startedAt,0) ?? now-startedAt`。
+- **rowsRange**：请求 `{sessionId, beforeRowId?, limit(min1,max=rowsRangeMaxLimit)}`，
+  响应 `{rows:[...], atSeq, atLogEpoch, hasMore}`；官方 loadOlder 默认 limit=
+  snapshotTailWindowRows，loadAllOlder 循环 limit=rowsRangeMaxLimit 到 hasMore=false。
+- **工具族图标**（lucide，全部已入库 official_icons.dart）：brain/terminal/search/
+  earth/globe/file-diff/list-todo/bot/git-branch + composer 触发器 sliders-horizontal/
+  package + 操作行 copy/thumbs-up/thumbs-down + plus 菜单 paperclip/ellipsis。
+  官方**没有**独立铅笔字形（编辑族用 file-diff）、没有 split（分叉用 git-branch）、
+  没有每模式专属图标（模式触发器统一 sliders-horizontal）。
+- **加号菜单**（He 官方截图）：添加附件 / 使用 @ 添加上下文 / 使用 / 选择能力 /
+  使用 $ 选择技能——四项，横向排开；无压缩/用量/计划项。
+- **辅助对话**：独立 sessionId 携带主会话上下文；隐藏 goal/重试/分叉/编辑重发/
+  点赞点踩/嵌套入口；保留完整 composer（配置按会话独立）+ 用量环。

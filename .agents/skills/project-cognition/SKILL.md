@@ -82,6 +82,14 @@ Conversation V4 传输层（每 workspace 缓存一份）。
     `androidx.core:core:1.18.0`（1.19.x 传递的 core-ktx 要求 compileSdk 37，挂在
     AAR metadata 检查）；`compileSdk` 固定 36。改 Kotlin/gradle 前先读
     `references/lessons.md` 的 Live Updates 节。
+13. **composer 断点用容器宽，不用视口宽**：官方是 `@container composer/inline-size`
+    （384/576/672），必须 LayoutBuilder 取工具条实测宽；用视口宽在平板主从/折叠屏
+    上必错（0.6.4 实际踩过）。壳侧边栏断点（640/720）是另一套，别混用。
+14. **UI 资源一律官方抓取**：图标走 `lib/ui/official_icons.dart`（lucide 矢量数据 +
+    自定义渲染器，重抓用 `build/gen_icons.py`）；配色以官方 CSS 变量为准（深
+    #161616/#202020/#2B2B2B/白10%线，浅 #F8F8F8/白/黑10%线，正文 #DEDEDE/#3A3A3A）；
+    流光/层级等动效样式先抓官方 CSS（`assets/*.css`，别只抓 JS）再实现，禁止自创。
+    向 He 声明"与官方一致"前必须有官方截图做视觉校准。
 
 ## 代码约定
 
@@ -115,7 +123,9 @@ flutter run -d chrome    # Web 冒烟
   （各层职责、官方函数对应、帧格式、竞态点）。
 - 改**对话页 UI / composer / mention(@) 相关**前 → 读
   `references/official-web-ui.md`（官方 Web 客户端逆向：mention markdown
-  格式、主题 CSS 变量、消息区样式常量、待挖清单）。
+  格式、主题 CSS 变量、消息区样式常量、状态面板/summaryPanel、composer
+  OF/VI 组件断点、工具族图标映射、待挖清单）；改样式动效前先抓官方
+  `assets/*.css`（流光、层级等真身在 CSS 里）。
 - 排查**回归类 bug** 或写修复方案前 → 读 `references/lessons.md`
   （按主题分类的完整踩坑记录与根因）。
 - 发**版本或改 CI/签名/更新检测**前 → 读 `references/release-and-testing.md`。

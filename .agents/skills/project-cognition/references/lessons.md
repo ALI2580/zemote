@@ -154,3 +154,29 @@
 - CI 的 ci.yml（web 冒烟）**不编译 Android**——Kotlin/gradle 改动只有 tag 触发的
   build-apk.yml 才会真正编译。首次接入原生 API 时预期 1-2 次构建失败是正常的，修复后
   `tag -f` 重指（Release 未生成的窗口内安全）。
+
+## 官方 UI 对齐实战（2026-09-07/08，v0.5.7→v0.6.6 八轮迭代）
+
+**视觉级证据强于逆向推断**：bundle 的 class 串只保证结构；卡片容器、状态文字、图标、颜色层级这类视觉决策必须用 He 的官方截图校准（v0.5.9 曾"结构对但视觉错"被打回）。主动要截图，比猜快。
+
+**Flutter InputDecoration 三态继承**：`border: InputBorder.none` 只关 border 一态，`enabledBorder`/`focusedBorder` 仍从全局主题漏入（灰边+聚焦蓝边）。一体化输入框（composer、气泡内联编辑）必须三态显式置空。
+
+**AnimatedSwitcher 手势陷阱**：切换瞬间旧 child 仍在层级内、新 child 已可命中，同一手势的抬指可能落在"刚出现的部件"上反向触发（状态胶囊收起点击无效的根因）。形态切换要么瞬时 swap，要么延迟切态。
+
+**SVG path 解析**：小写 `m`（相对移动）之后的隐式线段是相对的（`m5 12 7-7 7 7`），误当绝对坐标会画出飞出画布的"竖线"。lucide 图标大量以小写 m 起笔。
+
+**图标体系**：官方全部用 lucide（main.js 内 `X=Io('name',dataVar)` 定义 + 懒加载 chunk 格式 `var t=[[…]],n=e('name',t)`）。仓库 `lib/ui/official_icons.dart` 是生成物——重抓/新增图标走 `build/gen_icons.py`（icons.json → dart），生成后必须核对 map 收尾 `};` 没被拼接吃掉、无重复键。Dart 侧解析器已修相对移动 bug。
+
+**工具族图标映射**（实抓）：思考=brain、Bash=terminal、Read/Grep/Glob=search、WebSearch=earth/WebFetch=globe、Write/Edit族=file-diff（官方无独立铅笔字形！）、TodoWrite=list-todo、Task/subagent=bot、fork=git-branch（官方无 split）。
+
+**流光真身**（官方 CSS `index-BM2ndL2ru.css`，**样式在 CSS 资产里，别只抓 JS**）：`.animated-gradient-text` = linear-gradient(90deg, strong 0/34/66/100%, soft 50%)，background-size 300%，`gradient-flow` 4s linear——前 2s 从 position 100% 扫到 0、后 2s 停驻；strong=正文色（深 #fff/浅 #0d0d0d），soft=同色 20%/22%。是墨色呼吸，不是彩色闪光。
+
+**层级规则**：进行中行=foreground 墨色+流光标签；已完成行=subtlest（更浅）。turnHeader 时长官方用 BX 函数算：`activeMs ?? endedAt-startedAt ?? now-startedAt`，只读单一字段会拿不到秒数。
+
+**composer 断点=容器查询**：官方 `@container composer/inline-size`（@sm 384/@xl 576/@2xl 672），必须用工具条实测约束宽（LayoutBuilder），用视口宽在平板主从/折叠屏上必错。侧边栏壳断点（768px+触屏判定）是另一套，Zemote 有意下调 640/720。
+
+**脚本工程**：Git Bash heredoc 会吞反斜杠（`'\'`→`''`），带转义的 python 一律用 Write 工具写成文件再执行；循环 curl 里用 `stat -c%s` 判断成败会整批误报，单发 curl 实际都成功。
+
+**协议补充**（逆向）：rowsRange 响应=`{rows:[…], atSeq, atLogEpoch, hasMore}`（rows 是裸数组），schema 对 limit 有 max（rowsRangeMaxLimit，值未挖到，用 50 安全）；官方 loadAllOlder 循环拉到 hasMore=false——单页大 limit 会被拒。turnHeader/turn 时长字段=startedAt/endedAt/activeMs。goal 终态枚举含 completedSuccess（勿原文渲染）。
+
+**辅助对话语义**（官方）：独立 sessionId、创建时携带主会话上下文；隐藏 goal 横幅/重试/分叉/编辑重发/点赞点踩/嵌套入口；保留完整 composer（模型/模式/思考按会话独立）+ 用量环。配置命令按 sessionId scope，串扰是 UI 层共享草稿显示问题。
