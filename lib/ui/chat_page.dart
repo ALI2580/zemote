@@ -6606,11 +6606,48 @@ class _PlusMenuButtonState extends State<_PlusMenuButton> {
       link: _link,
       child: _ToolbarGhostButton(
         tooltip: '更多操作',
-        onTap: widget.disabled ? null : () => _entry == null ? _open() : _close(),
+        onTap: widget.disabled ? null : _activate,
         // He 指定：加号（plus）而非官方的 ellipsis 三点。
         child: LucideIcon('plus', size: 16, color: ZInk.muted(context)),
       ),
     );
+  }
+
+  /// 窄屏（手机）底部弹窗；宽屏保持官方上方锚定浮窗。
+  void _activate() {
+    if (MediaQuery.sizeOf(context).width < kMobileMenuWidth) {
+      showComposerMenuSheet(
+        context,
+        builder: (sheetContext, close) => Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _plusRow(sheetContext, 'paperclip', '添加附件', null, () {
+              close();
+              widget.onAttach();
+            }),
+            _plusRow(sheetContext, 'at-sign', '添加上下文', '@', () {
+              close();
+              widget.onTrigger('@');
+            }),
+            _plusRow(sheetContext, 'square-slash', '选择能力', '/', () {
+              close();
+              widget.onTrigger('/');
+            }),
+            _plusRow(sheetContext, 'dollar-sign', '选择技能', r'$', () {
+              close();
+              widget.onTrigger(r'$');
+            }),
+          ],
+        ),
+      );
+      return;
+    }
+    if (_entry == null) {
+      _open();
+    } else {
+      _close();
+    }
   }
 }
 

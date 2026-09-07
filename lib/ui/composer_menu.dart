@@ -123,6 +123,38 @@ class ComposerChip extends StatefulWidget {
   State<ComposerChip> createState() => _ComposerChipState();
 }
 
+/// Narrow-screen cutoff for the mobile menu form. Matches the app-shell
+/// breakpoint (below 640 there is no side nav / master-detail) — on phones
+/// the anchored popper is awkward so chips open a bottom sheet instead;
+/// wide screens keep the official top-anchored popover.
+const double kMobileMenuWidth = 640;
+
+/// Opens [builder] as a Material bottom sheet in the official popover
+/// palette — shared by ComposerChip and the plus menu on narrow screens.
+void showComposerMenuSheet(
+  BuildContext context, {
+  required Widget Function(BuildContext context, VoidCallback close) builder,
+}) {
+  showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    backgroundColor: ZInk.panel(context),
+    constraints: BoxConstraints(
+      maxHeight: MediaQuery.sizeOf(context).height * 0.6,
+    ),
+    builder: (sheetContext) => SafeArea(
+      top: false,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(8, 0, 8, 10),
+        child: builder(
+          sheetContext,
+          () => Navigator.of(sheetContext).pop(),
+        ),
+      ),
+    ),
+  );
+}
+
 class _ComposerChipState extends State<ComposerChip> {
   final _link = LayerLink();
   OverlayEntry? _entry;
@@ -131,6 +163,13 @@ class _ComposerChipState extends State<ComposerChip> {
   void _toggle() {
     if (_open) {
       _close();
+      return;
+    }
+    // 窄屏（手机）走底部弹窗 —— 官方 popper 是 PC 大屏交互，移动端
+    // 锚定浮窗不好按也不好转屏适配；宽屏保持官方浮窗。
+    if (MediaQuery.sizeOf(context).width < kMobileMenuWidth) {
+      setState(() {});
+      showComposerMenuSheet(context, builder: widget.menuBuilder);
       return;
     }
     final overlay = Overlay.of(context, rootOverlay: true);
