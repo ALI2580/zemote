@@ -2,10 +2,18 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [0.6.11] - 2026-09-07
 
 ### Changed
+- **待发附件渲染进 composer**：图片缩略图带磨砂删除角标、文件 tile 为 paperclip + 省略化文件名、细进度条上传态——不再只顶栏计数。
+- **发送按钮回归正圆**：圆形发送形；停止形改为浅色圆环包深色方块；编辑气泡操作复用 composer `_SendButton`（空文案禁用门控），取消为幽灵文字按钮。
+- **输入即翻回发送形**：任务运行中开始输入时按钮切回发送（点击为排队补发），仅空输入时保持停止形。
+- **宽屏主从收合侧栏**：内嵌会话打开时设备/导航 rail 以 260ms 视差滑入左收，列表头新增菜单按钮恢复；宽屏工作区选择器去掉重复的「已连接」角标（侧边栏保留）。
+- **用量环 28px 工具栏等高**：环 18px + 5px 内边距，与其他工具栏控件同高。
 - **用量弹层双形态**：点击 composer 用量环，窄屏（<640）与其他工具栏菜单一致改 Material 底部弹窗（drag handle + 60% 限高滚动 + 底部安全区），宽屏保持官方环上方锚定浮窗（sideOffset=2、贴右缘自动右对齐）不变。
+
+### Fixed
+- **运行中 turn 不再中途收起**：思考/分段间隙被行级活跃判定误判为轮次结束导致收起——判定以 conversation phase（turnRunning）为权威兜底；phase 运行且无活跃行时列表底部显示加载行；回归测试锚定（test/turn_history_test.dart）。
 
 ## [0.6.10] - 2026-09-07
 
