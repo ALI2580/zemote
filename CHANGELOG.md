@@ -2,6 +2,11 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Changed
+- **用量弹层双形态**：点击 composer 用量环，窄屏（<640）与其他工具栏菜单一致改 Material 底部弹窗（drag handle + 60% 限高滚动 + 底部安全区），宽屏保持官方环上方锚定浮窗（sideOffset=2、贴右缘自动右对齐）不变。
+
 ## [0.6.10] - 2026-09-07
 
 ### Changed

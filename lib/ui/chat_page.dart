@@ -1916,7 +1916,20 @@ class _ChatPageState extends State<ChatPage>
     final state = _state;
     final sessionId = _sessionId;
     if (state == null || sessionId == null) return;
-    // 官方为环上方悬浮 popover（非底部卡片）；贴右缘时右对齐防溢出。
+    // 窄屏（手机）与其他 composer 菜单同形态走底部弹窗；宽屏保持官方
+    // 环上方悬浮 popover（贴右缘时右对齐防溢出）。
+    if (MediaQuery.sizeOf(context).width < kMobileMenuWidth) {
+      showComposerMenuSheet(
+        context,
+        builder: (sheetContext, close) => _UsageSheet(
+          state: state,
+          session: widget.session,
+          scope: widget.scope,
+          sessionId: sessionId,
+        ),
+      );
+      return;
+    }
     final ringBox =
         _usageRingKey.currentContext?.findRenderObject() as RenderBox?;
     final screenW = MediaQuery.sizeOf(context).width;
