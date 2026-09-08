@@ -2,7 +2,7 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [未发布]
+## [0.6.12] - 2026-09-07
 
 ### Added
 - **用量弹层「套餐额度」区（官方自营模型特殊样式复刻）**：解密官方 NZe/fZe/gZe 后落地——编程套餐账号显示 5 小时 Prompt 池 / 每周额度 / 工具调用 / ZCode MCP 四项剩余额度（官方 usage-chart 色板、6px 圆角进度条带 500ms 宽度过渡、重置时间 HH:mm 或 M月d日，主卡满 3 张时 MCP 降级为分隔线全宽单行）；Start Plan 账号显示每模型「今日余额」卡（剩余百分比 + 自适应重置时间 + 绿色进度条）。数据走 `usage-stats` 通道 `getEntitlementSnapshot`（官方同链路），弹层打开即静默拉取，失败/未登录/无套餐/旧桌面端无通道时整区自动隐藏；解析层为纯 Dart（lib/protocol/entitlement.dart），test/entitlement_test.dart 锚定。
