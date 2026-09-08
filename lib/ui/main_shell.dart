@@ -143,6 +143,9 @@ class _MainShellContent extends StatefulWidget {
 
 class _MainShellContentState extends State<_MainShellContent> {
   int _tab = 0;
+
+  /// 宽屏侧栏收起态：内联会话打开时由 TaskHomePage 上报驱动。
+  bool _railCollapsed = false;
   List<dynamic> _workspaces = const [];
   bool _loading = true;
   String? _error;
@@ -346,6 +349,9 @@ class _MainShellContentState extends State<_MainShellContent> {
       _taskNotifier = null;
       _bridge = null;
       _activeWorkspace = null;
+      // 回工作区选择 = 内联会话消失，侧栏恢复展开（避免新页挂载瞬间
+      // 残留收起态）。
+      _railCollapsed = false;
     });
   }
 
@@ -389,6 +395,7 @@ class _MainShellContentState extends State<_MainShellContent> {
                     client: widget.client,
                     onRefresh: _load,
                     onOpen: _openWorkspace,
+                    showConnectionDot: !wide,
                   )
                 : TaskHomePage(
                     key: ValueKey(
@@ -398,6 +405,14 @@ class _MainShellContentState extends State<_MainShellContent> {
                     client: widget.client,
                     workspaces: _workspaces,
                     onSwitchWorkspace: _closeBridge,
+                    railCollapsed: _railCollapsed,
+                    onToggleRail: () =>
+                        setState(() => _railCollapsed = false),
+                    onInlineChatChanged: (open) {
+                      if (_railCollapsed != open) {
+                        setState(() => _railCollapsed = open);
+                      }
+                    },
                   ),
             _ => SettingsPage(
                 client: widget.client,
@@ -436,14 +451,24 @@ class _MainShellContentState extends State<_MainShellContent> {
           child: wide
               ? Row(
                   children: [
-                    _SideNav(
-                      account: widget.account,
-                      tab: _tab,
-                      client: widget.client,
-                      onSelect: (i) => setState(() => _tab = i),
-                      onSwitchDevice: _showDeviceSwitcher,
+                    // 内联会话打开时设备/导航侧栏左滑收起，左缘只留
+                    // 消息列表；列表头部菜单钮可滑回。
+                    _CollapsibleRail(
+                      collapsed: _railCollapsed,
+                      child: Row(
+                        children: [
+                          _SideNav(
+                            account: widget.account,
+                            tab: _tab,
+                            client: widget.client,
+                            onSelect: (i) => setState(() => _tab = i),
+                            onSwitchDevice: _showDeviceSwitcher,
+                          ),
+                          VerticalDivider(
+                              width: 1, color: ZInk.hairline(context)),
+                        ],
+                      ),
                     ),
-                    VerticalDivider(width: 1, color: ZInk.hairline(context)),
                     Expanded(child: content),
                   ],
                 )
@@ -490,6 +515,69 @@ class _MainShellContentState extends State<_MainShellContent> {
     if (exit == true && mounted) {
       Navigator.of(context).pop();
     }
+  }
+}
+
+/// 宽屏侧栏收起动画：进入内联会话时宽度向左收拢、内容同步左移
+/// （ClipRect + widthFactor + translate 的视差滑动），离开时滑回。
+class _CollapsibleRail extends StatefulWidget {
+  final bool collapsed;
+  final Widget child;
+
+  const _CollapsibleRail({required this.collapsed, required this.child});
+
+  @override
+  State<_CollapsibleRail> createState() => _CollapsibleRailState();
+}
+
+class _CollapsibleRailState extends State<_CollapsibleRail>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl = AnimationController(
+    duration: const Duration(milliseconds: 260),
+    value: widget.collapsed ? 0 : 1,
+    vsync: this,
+  );
+  late final Animation<double> _curved =
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeInOutCubic);
+
+  @override
+  void didUpdateWidget(_CollapsibleRail oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.collapsed == oldWidget.collapsed) return;
+    if (widget.collapsed) {
+      _ctrl.reverse();
+    } else {
+      _ctrl.forward();
+    }
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _curved,
+      builder: (context, child) {
+        final t = _curved.value;
+        if (t <= 0) return const SizedBox.shrink();
+        return ClipRect(
+          child: Align(
+            alignment: Alignment.centerLeft,
+            widthFactor: t,
+            // 视差：内容比收拢边多滑一点，产生「向左移出」的手感。
+            child: Transform.translate(
+              offset: Offset(-(1 - t) * 64, 0),
+              child: child,
+            ),
+          ),
+        );
+      },
+      child: widget.child,
+    );
   }
 }
 
@@ -802,6 +890,9 @@ class _WorkspacePicker extends StatelessWidget {
   final Future<void> Function() onRefresh;
   final Future<void> Function(Map<String, dynamic>) onOpen;
 
+  /// 宽屏侧栏底部已有同款连接状态 tag，头部这枚仅窄屏展示，避免重复。
+  final bool showConnectionDot;
+
   const _WorkspacePicker({
     required this.workspaces,
     required this.loading,
@@ -809,6 +900,7 @@ class _WorkspacePicker extends StatelessWidget {
     required this.client,
     required this.onRefresh,
     required this.onOpen,
+    this.showConnectionDot = true,
   });
 
   @override
@@ -825,7 +917,7 @@ class _WorkspacePicker extends StatelessWidget {
                     style:
                         TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
               ),
-              _ConnectionDot(client: client),
+              if (showConnectionDot) _ConnectionDot(client: client),
               IconButton(
                   icon: const Icon(Icons.refresh), onPressed: onRefresh),
             ],

@@ -82,6 +82,16 @@ class TaskHomePage extends StatefulWidget {
   final List<dynamic> workspaces;
   final VoidCallback onSwitchWorkspace;
 
+  /// 宽屏主从布局下侧栏（设备/导航）是否已收起；收起时列表头部显示
+  /// 展开入口。
+  final bool railCollapsed;
+
+  /// 列表头部的展开入口点击 → 外壳把侧栏滑回。
+  final VoidCallback? onToggleRail;
+
+  /// 内联会话打开/关闭时上报（外壳据此收起/展开侧栏）。
+  final ValueChanged<bool>? onInlineChatChanged;
+
   const TaskHomePage({
     super.key,
     required this.workspace,
@@ -89,6 +99,9 @@ class TaskHomePage extends StatefulWidget {
     required this.client,
     required this.workspaces,
     required this.onSwitchWorkspace,
+    this.railCollapsed = false,
+    this.onToggleRail,
+    this.onInlineChatChanged,
   });
 
   @override
@@ -212,6 +225,8 @@ class _TaskHomePageState extends State<TaskHomePage>
 
   @override
   void dispose() {
+    // 页面卸载（切工作区/切 tab）= 内联会话消失，侧栏恢复展开。
+    widget.onInlineChatChanged?.call(false);
     _tabController.dispose();
     _searchController.dispose();
     _updatedSub?.cancel();
@@ -372,8 +387,12 @@ class _TaskHomePageState extends State<TaskHomePage>
         _inlineTaskId = '$taskId';
         _inlineTaskTitle = _taskTitle(task);
       });
+      // 进入会话：外壳侧栏左滑收起，左缘只留消息列表。
+      widget.onInlineChatChanged?.call(true);
       return;
     }
+    // 进入会话（push 路由）：侧栏同样左滑收起。
+    widget.onInlineChatChanged?.call(true);
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => ChatPage(
@@ -385,6 +404,8 @@ class _TaskHomePageState extends State<TaskHomePage>
         ),
       ),
     );
+    // 返回列表：侧栏滑回。
+    widget.onInlineChatChanged?.call(false);
     if (!mounted) return;
     await _load();
     _mergeSessions();
@@ -607,8 +628,12 @@ class _TaskHomePageState extends State<TaskHomePage>
         _inlineTaskTitle = '新任务';
         _inlineDraft = _draftSerial;
       });
+      // 草稿会话同样是内联打开：侧栏收起。
+      widget.onInlineChatChanged?.call(true);
       return;
     }
+    // 草稿会话（push 路由）：侧栏同样收起。
+    widget.onInlineChatChanged?.call(true);
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => ChatPage(
@@ -620,6 +645,8 @@ class _TaskHomePageState extends State<TaskHomePage>
         ),
       ),
     );
+    // 返回列表：侧栏滑回。
+    widget.onInlineChatChanged?.call(false);
     if (!mounted) return;
     await _load();
     _mergeSessions();
@@ -798,6 +825,14 @@ class _TaskHomePageState extends State<TaskHomePage>
           padding: const EdgeInsets.fromLTRB(16, 6, 8, 2),
           child: Row(
             children: [
+              // 侧栏收起态（内联会话打开）：左缘露出展开入口。
+              if (widget.railCollapsed && widget.onToggleRail != null)
+                IconButton(
+                  icon: const Icon(Icons.menu, size: 20),
+                  tooltip: '设备与导航',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: widget.onToggleRail,
+                ),
               Expanded(
                 child: _searchOpen
                     ? TextField(

@@ -472,6 +472,20 @@ bool turnDefaultOpen({
   return (isLastTurn && running) || (isOnlyTurn && !hasAssistantText);
 }
 
+/// Whether a turn counts as running for the collapse model. Row-level
+/// activity flickers: in the gap between thinking/tool/text segments no row
+/// is momentarily streaming, which used to flip the default and collapse the
+/// turn mid-run. The conversation phase (`control.phase`) is the
+/// uninterrupted authoritative signal (same one the v4 watchdog uses), so
+/// the latest turn stays open until the whole reply finishes.
+bool turnRunning({
+  required bool rowsActive,
+  required bool isLastTurn,
+  required bool phaseRunning,
+}) {
+  return rowsActive || (isLastTurn && phaseRunning);
+}
+
 /// Time-of-day greeting for the draft (empty) chat, official chat.empty
 /// greeting copy.
 String emptyGreeting(DateTime now) {
@@ -2120,12 +2134,19 @@ class _ChatPageState extends State<ChatPage>
                         animation: state,
                         builder: (context, _) {
                           final groups = _groupRows(state.rows);
+                          // phase 运行中但所有行都不活跃（思考/分段间隙、
+                          // 刚发送还没产出）：列表底部显示加载行，提示任务
+                          // 仍在运行、消息尚未输出完毕。
+                          final showRunLoader = state.isRunning &&
+                              !state.rows.any(_rowIsActive);
                           final itemCount = groups.length +
                               _echoes.length +
-                              (state.canLoadOlder ? 1 : 0);
+                              (state.canLoadOlder ? 1 : 0) +
+                              (showRunLoader ? 1 : 0);
                           if (groups.isEmpty &&
                               _echoes.isEmpty &&
-                              !state.canLoadOlder) {
+                              !state.canLoadOlder &&
+                              !showRunLoader) {
                             return Center(
                                 child: Text('暂无消息',
                                     style:
@@ -2157,8 +2178,12 @@ class _ChatPageState extends State<ChatPage>
                               final contentIndex =
                                   index - (state.canLoadOlder ? 1 : 0);
                               if (contentIndex >= groups.length) {
-                                final echo =
-                                    _echoes[contentIndex - groups.length];
+                                final echoIndex = contentIndex - groups.length;
+                                // 越过 echoes 的最后一项 = 运行加载行。
+                                if (echoIndex >= _echoes.length) {
+                                  return const _RunLoaderRow();
+                                }
+                                final echo = _echoes[echoIndex];
                                 return _UserBubble(
                                   row: {
                                     'kind': 'userInput',
@@ -2176,11 +2201,20 @@ class _ChatPageState extends State<ChatPage>
                               final group = groups[contentIndex];
                               final turnKey =
                                   't${group.first['rowId'] ?? contentIndex}';
-                              final running = group.any(_rowIsActive);
+                              final isLastTurn =
+                                  contentIndex == groups.length - 1;
+                              // phase 兜底：思考/分段间隙行级活跃会闪断，
+                              // 运行中的最后一轮必须保持展开（官方语义：
+                              // 只有整段回复结束才折叠）。
+                              final running = turnRunning(
+                                rowsActive: group.any(_rowIsActive),
+                                isLastTurn: isLastTurn,
+                                phaseRunning: state.isRunning,
+                              );
                               final hasAssistantText =
                                   group.any((r) => r['kind'] == 'assistantText');
                               final defaultOpen = turnDefaultOpen(
-                                isLastTurn: contentIndex == groups.length - 1,
+                                isLastTurn: isLastTurn,
                                 running: running,
                                 isOnlyTurn: groups.length == 1,
                                 hasAssistantText: hasAssistantText,
@@ -2199,6 +2233,7 @@ class _ChatPageState extends State<ChatPage>
                                 onAction: _run,
                                 state: state,
                                 sideChat: widget.isSideChat,
+                                turnRunning: running,
                                 turnExpanded: _turnExpandedOverrides[turnKey] ??
                                     defaultOpen,
                                 onToggleExpanded: (open) => setState(
@@ -2287,12 +2322,6 @@ class _ChatPageState extends State<ChatPage>
                 ],
               ),
             ),
-          if (_pendingFiles.isNotEmpty)
-            _PendingFilesBar(
-              files: _pendingFiles,
-              uploadProgress: _uploadProgress,
-              onRemove: (i) => setState(() => _pendingFiles.removeAt(i)),
-            ),
           _InputBar(
             controller: _inputController,
             sending: _sending,
@@ -2312,6 +2341,15 @@ class _ChatPageState extends State<ChatPage>
             // 官方语义：辅助对话保留用量环（快照缺 contextWindow 时自动隐藏）。
             usageRing: _buildUsageRing(),
             isSideChat: widget.isSideChat,
+            // 待发送附件在 composer 圆角框内顶部展示（官方同位置）。
+            attachments: _pendingFiles.isEmpty
+                ? null
+                : _PendingFilesBar(
+                    files: _pendingFiles,
+                    uploadProgress: _uploadProgress,
+                    onRemove: (i) =>
+                        setState(() => _pendingFiles.removeAt(i)),
+                  ),
           ),
         ],
       ),
@@ -2468,6 +2506,10 @@ class _TurnGroupWidget extends StatelessWidget {
   /// turn model: latest turn open while running, completed turns collapse).
   final bool turnExpanded;
 
+  /// Phase-aware running flag from the parent list (row activity alone
+  /// flickers in thinking/segment gaps). Null = derive from rows.
+  final bool? turnRunning;
+
   /// User toggled the turn collapse state.
   final ValueChanged<bool>? onToggleExpanded;
 
@@ -2478,6 +2520,7 @@ class _TurnGroupWidget extends StatelessWidget {
     required this.onAction,
     required this.state,
     this.sideChat = false,
+    this.turnRunning,
     this.turnExpanded = true,
     this.onToggleExpanded,
   });
@@ -2499,7 +2542,8 @@ class _TurnGroupWidget extends StatelessWidget {
     final showTurnHeader = !sideChat && assistantRows.isNotEmpty;
     // 官方语义：反馈/复制/分叉等操作只在轮次结束后出现 —— 运行中的任何
     // 行（流式文本/执行中工具/等待确认/turnHeader running）都压住操作行。
-    final turnRunning = assistantRows.any(_rowIsActive);
+    // 父级传入 phase 兜底的运行标记，避免思考间隙闪断误放操作行。
+    final turnRunning = this.turnRunning ?? assistantRows.any(_rowIsActive);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -2988,34 +3032,37 @@ class _UserBubbleState extends State<_UserBubble> {
                       contentPadding: EdgeInsets.zero,
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      TextButton(
-                        onPressed: _sending
-                            ? null
-                            : () => setState(() => _editing = false),
-                        style: TextButton.styleFrom(
-                            visualDensity: VisualDensity.compact,
-                            minimumSize: Size.zero,
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-                        child: const Text('取消',
-                            style: TextStyle(fontSize: 12)),
-                      ),
-                      const SizedBox(width: 6),
-                      FilledButton(
-                        onPressed: _sending ? null : _confirmEdit,
-                        style: FilledButton.styleFrom(
-                            visualDensity: VisualDensity.compact,
-                            minimumSize: Size.zero,
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 6),
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-                        child: const Text('重新发送',
-                            style: TextStyle(fontSize: 12)),
-                      ),
-                    ],
+                  const SizedBox(height: 10),
+                  // 操作行：ghost 取消 + 与主 composer 同款的 _SendButton
+                  // （28px 墨色方砖 + arrow-up，空文本置灰，发送中转圈）。
+                  ValueListenableBuilder<TextEditingValue>(
+                    valueListenable: _editController!,
+                    builder: (context, value, _) => Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton(
+                          onPressed: _sending
+                              ? null
+                              : () => setState(() => _editing = false),
+                          style: TextButton.styleFrom(
+                              foregroundColor: ZInk.faint(context),
+                              visualDensity: VisualDensity.compact,
+                              minimumSize: Size.zero,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 5),
+                              tapTargetSize:
+                                  MaterialTapTargetSize.shrinkWrap),
+                          child: const Text('取消',
+                              style: TextStyle(fontSize: 12)),
+                        ),
+                        const SizedBox(width: 6),
+                        _SendButton(
+                          sending: _sending,
+                          enabled: value.text.trim().isNotEmpty,
+                          onSend: _confirmEdit,
+                        ),
+                      ],
+                    ),
                   ),
                 ] else ...[
                   if (text.isNotEmpty)
@@ -3351,6 +3398,37 @@ class _FeedbackButton extends StatelessWidget {
         maximumSize: const Size(30, 30),
         padding: EdgeInsets.zero,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+    );
+  }
+}
+
+/// 运行加载行：任务 phase 仍在运行、但当前没有任何活跃输出行（思考/
+/// 分段间隙、刚发送还没产出）时，挂在列表最底部，提示消息尚未输出完毕。
+/// 样式与官方流式头部同源：小 spinner + animated-gradient-text。
+class _RunLoaderRow extends StatelessWidget {
+  const _RunLoaderRow();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, bottom: 2),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 13,
+            height: 13,
+            child: CircularProgressIndicator(
+                strokeWidth: 1.5, color: ZColors.running),
+          ),
+          const SizedBox(width: 8),
+          _AnimatedGradientText(
+            text: '正在处理',
+            style:
+                const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+          ),
+        ],
       ),
     );
   }
@@ -4428,9 +4506,11 @@ class _ContextUsageRing extends StatelessWidget {
         onTap: onTap,
         customBorder: const CircleBorder(),
         child: Padding(
+          // 18px 圆环 + 5px 内边距 = 28px，与工具条其他 chip 同高
+          // （此前 20px 圆环整行 30px，视觉上大一圈）。
           padding: const EdgeInsets.all(5),
           child: CustomPaint(
-            size: const Size(20, 20),
+            size: const Size(18, 18),
             painter: _UsageRingPainter(ratio, color: ZInk.muted(context)),
           ),
         ),
@@ -5370,6 +5450,9 @@ class _QueueAction extends StatelessWidget {
   }
 }
 
+/// 待发送附件条：位于 composer 圆角框内顶部（官方同位置，不再挂在
+/// 框外）。图片附件出 60px 圆角缩略预览，其余附件为回形针图标 +
+/// 文件名的名片块；每块右上/右端带磨砂 × 移除；上传进度为顶部细条。
 class _PendingFilesBar extends StatelessWidget {
   final List<_PendingFile> files;
   final double? uploadProgress;
@@ -5383,37 +5466,145 @@ class _PendingFilesBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(14, 4, 14, 0),
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: ZInk.tile(context),
-        borderRadius: BorderRadius.circular(12),
-      ),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (uploadProgress != null)
             Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: LinearProgressIndicator(value: uploadProgress),
+              padding: const EdgeInsets.only(bottom: 8),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(2),
+                child: LinearProgressIndicator(
+                    value: uploadProgress, minHeight: 3),
+              ),
             ),
           Wrap(
-            spacing: 6,
-            runSpacing: 6,
+            spacing: 8,
+            runSpacing: 8,
             children: [
               for (var i = 0; i < files.length; i++)
-                Chip(
-                  avatar: const Icon(Icons.attach_file, size: 14),
-                  label: Text(files[i].fileName,
-                      style: const TextStyle(fontSize: 11)),
-                  onDeleted: () => onRemove(i),
-                  deleteIcon: const Icon(Icons.close, size: 14),
-                  visualDensity: VisualDensity.compact,
-                ),
+                files[i].mime.startsWith('image/')
+                    ? _ImageThumbTile(
+                        file: files[i], onRemove: () => onRemove(i))
+                    : _FileTile(
+                        file: files[i], onRemove: () => onRemove(i)),
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// 图片附件：圆角缩略图 + 右上角磨砂移除钮。
+class _ImageThumbTile extends StatelessWidget {
+  final _PendingFile file;
+  final VoidCallback onRemove;
+
+  const _ImageThumbTile({required this.file, required this.onRemove});
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: Image.memory(
+            file.bytes,
+            width: 60,
+            height: 60,
+            fit: BoxFit.cover,
+            gaplessPlayback: true,
+            // 扩展名是 image/* 但解码失败时回落到文件块视觉。
+            errorBuilder: (context, _, __) => Container(
+              width: 60,
+              height: 60,
+              color: ZInk.tile(context),
+              child: Icon(Icons.broken_image_outlined,
+                  size: 18, color: ZInk.muted(context)),
+            ),
+          ),
+        ),
+        Positioned(
+          top: 3,
+          right: 3,
+          child: _TileRemoveButton(onTap: onRemove, overlay: true),
+        ),
+      ],
+    );
+  }
+}
+
+/// 非图片附件：回形针 + 文件名（超长省略）的名片块 + 右端移除钮。
+class _FileTile extends StatelessWidget {
+  final _PendingFile file;
+  final VoidCallback onRemove;
+
+  const _FileTile({required this.file, required this.onRemove});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 40,
+      decoration: BoxDecoration(
+        color: ZInk.tile(context),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: ZInk.hairline(context)),
+      ),
+      padding: const EdgeInsets.fromLTRB(10, 0, 4, 0),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          LucideIcon('paperclip', size: 14, color: ZInk.muted(context)),
+          const SizedBox(width: 8),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 132),
+            child: Text(
+              file.fileName,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12, color: ZInk.solid(context)),
+            ),
+          ),
+          const SizedBox(width: 2),
+          _TileRemoveButton(onTap: onRemove),
+        ],
+      ),
+    );
+  }
+}
+
+/// 附件移除钮：overlay = 缩略图上的磨砂深底白 ×；inline = 名片块内
+/// 的 ghost ×（faint，hover 态由 InkWell 承担）。
+class _TileRemoveButton extends StatelessWidget {
+  final VoidCallback onTap;
+  final bool overlay;
+
+  const _TileRemoveButton({required this.onTap, this.overlay = false});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      type: MaterialType.transparency,
+      child: InkWell(
+        onTap: onTap,
+        customBorder: const CircleBorder(),
+        child: Container(
+          width: overlay ? 18 : 24,
+          height: overlay ? 18 : 24,
+          decoration: overlay
+              ? BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.55),
+                  shape: BoxShape.circle,
+                )
+              : null,
+          child: Icon(
+            Icons.close,
+            size: overlay ? 11 : 13,
+            color: overlay ? Colors.white : ZInk.faint(context),
+          ),
+        ),
       ),
     );
   }
@@ -6211,6 +6402,9 @@ class _InputBar extends StatefulWidget {
   final Widget Function(double composerWidth) thoughtChip;
   final Widget usageRing;
 
+  /// 待发送附件条（图片缩略/文件名片块），渲染在 composer 框内顶部。
+  final Widget? attachments;
+
   /// 辅助会话完全隔离：不显示模式/模型/思考配置入口（切换会影响主会话）。
   final bool isSideChat;
 
@@ -6229,6 +6423,7 @@ class _InputBar extends StatefulWidget {
     required this.modelChip,
     required this.thoughtChip,
     required this.usageRing,
+    this.attachments,
     required this.isSideChat,
   });
 
@@ -6256,6 +6451,7 @@ class _InputBarState extends State<_InputBar> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (widget.attachments != null) widget.attachments!,
               Row(
                 children: [
                   Expanded(
@@ -6339,11 +6535,17 @@ class _InputBarState extends State<_InputBar> {
                       const SizedBox(width: 4),
                       widget.thoughtChip(w),
                       const SizedBox(width: 4),
-                      _SendButton(
-                        sending: widget.sending,
-                        running: widget.running,
-                        onSend: widget.onSend,
-                        onStop: widget.onStop,
+                      ValueListenableBuilder<TextEditingValue>(
+                        valueListenable: widget.controller,
+                        builder: (context, value, _) => _SendButton(
+                          sending: widget.sending,
+                          // 运行中有新输入 → 变回发送形态（走 held-queue
+                          // 排队发送）；只有输入为空才保持停止形态。
+                          running:
+                              widget.running && value.text.trim().isEmpty,
+                          onSend: widget.onSend,
+                          onStop: widget.onStop,
+                        ),
                       ),
                     ],
                   );
@@ -6375,15 +6577,19 @@ class _InputBarState extends State<_InputBar> {
   }
 }
 
-/// Composer send button — official web style (`icon-md` + brand fill):
-/// 28px rounded-lg(8) square in the brand ink color (dark theme: white
-/// tile / dark arrow; light: near-black tile / white arrow), arrow-up
-/// glyph, fading when disabled.
+/// Composer send button — 28px full-round brand-ink circle (dark theme:
+/// white tile / dark arrow; light: near-black tile / white arrow) with the
+/// arrow-up glyph. 运行中变为停止形态：浅色圆（#E8E8E8，双主题通用）内
+/// 包深色实心圆角方块；禁用/发送中半透明。
 class _SendButton extends StatelessWidget {
   final bool sending;
 
-  /// 任务运行中：同款圆形按钮变为官方停止形态（内部实心方块）。
+  /// 任务运行中：按钮切到停止形态（浅圆 + 深色方块）。
   final bool running;
+
+  /// 可发送状态（如编辑框非空）；false 时半透明且不可点，与 sending
+  /// 同款视觉，供气泡内编辑态复用。
+  final bool enabled;
   final VoidCallback onSend;
   final VoidCallback? onStop;
 
@@ -6391,6 +6597,7 @@ class _SendButton extends StatelessWidget {
     required this.sending,
     required this.onSend,
     this.running = false,
+    this.enabled = true,
     this.onStop,
   });
 
@@ -6400,16 +6607,20 @@ class _SendButton extends StatelessWidget {
     // 注意 ZInk.solid 是 #DEDEDE/#262626（非纯黑白），必须按亮度判反色，
     // 不能 == Colors.white（否则白箭头画在浅灰底上不可见）。
     final ink = ZInk.solid(context);
-    final arrowColor =
+    final onInk =
         ink.computeLuminance() > 0.5 ? Colors.black : Colors.white;
+    // 停止形态：浅灰圆在深色 composer(#2B2B2B) 与浅色 composer(白) 上
+    // 都清晰可辨，内部深方块双主题同一色，无需按亮度翻转。
+    final circleColor = running ? const Color(0xFFE8E8E8) : ink;
+    final dimmed = sending || !enabled;
     return Opacity(
-      opacity: sending ? 0.45 : 1,
+      opacity: dimmed ? 0.45 : 1,
       child: Material(
-        color: ink,
-        borderRadius: BorderRadius.circular(8),
+        color: circleColor,
+        borderRadius: BorderRadius.circular(14),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
-          onTap: sending
+          onTap: dimmed
               ? null
               : running
                   ? onStop
@@ -6423,12 +6634,21 @@ class _SendButton extends StatelessWidget {
                       width: 14,
                       height: 14,
                       child: CircularProgressIndicator(
-                          strokeWidth: 2, color: arrowColor),
+                          strokeWidth: 2, color: onInk),
                     )
-                  : LucideIcon(
-                      running ? 'circle-stop' : 'arrow-up',
-                      size: 16,
-                      color: arrowColor,
+                  : running
+                      ? Container(
+                          width: 10,
+                          height: 10,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF262626),
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        )
+                      : LucideIcon(
+                          'arrow-up',
+                          size: 16,
+                          color: onInk,
                     ),
             ),
           ),

@@ -101,6 +101,53 @@ void main() {
     });
   });
 
+  group('turnRunning (phase-backed running flag, 思考间隙不闪断)', () {
+    test('rows active keeps any turn running', () {
+      expect(
+        turnRunning(
+            rowsActive: true, isLastTurn: false, phaseRunning: false),
+        isTrue,
+      );
+    });
+
+    test('thinking gap on last turn stays running via phase', () {
+      // 回归锚定：思考/分段间隙没有任何行是 streaming/running，
+      // 旧逻辑此刻误判 running=false → 运行中的 turn 被收起。
+      expect(
+        turnRunning(rowsActive: false, isLastTurn: true, phaseRunning: true),
+        isTrue,
+      );
+    });
+
+    test('phase running does not resurrect older completed turns', () {
+      expect(
+        turnRunning(
+            rowsActive: false, isLastTurn: false, phaseRunning: true),
+        isFalse,
+      );
+    });
+
+    test('turn finished: no rows active, phase idle', () {
+      expect(
+        turnRunning(
+            rowsActive: false, isLastTurn: true, phaseRunning: false),
+        isFalse,
+      );
+    });
+
+    test('combined with turnDefaultOpen: gap no longer collapses last turn',
+        () {
+      final open = turnDefaultOpen(
+        isLastTurn: true,
+        running: turnRunning(
+            rowsActive: false, isLastTurn: true, phaseRunning: true),
+        isOnlyTurn: false,
+        hasAssistantText: true,
+      );
+      expect(open, isTrue);
+    });
+  });
+
   group('emptyGreeting (official chat.empty.greeting copy)', () {
     DateTime at(int hour) => DateTime(2026, 9, 7, hour);
 
