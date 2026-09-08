@@ -8,6 +8,7 @@ import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart';
 
 import '../protocol/conversation.dart';
+import '../protocol/entitlement.dart';
 import '../protocol/zemote_client.dart';
 import '../state/log_store.dart';
 import 'composer_menu.dart';
@@ -1526,10 +1527,12 @@ class _ChatPageState extends State<ChatPage>
     return v.substring(idx + 1);
   }
 
-  /// 官方模型 chip 文字逻辑（PAe + OF 调用点，2026-09-07 解密）：
+  /// 官方模型 chip 文字逻辑（PAe + OF 调用点，2026-09-08 复核）：
   /// ≥384px 显示模型名；≥672px 追加 `{供应商名}/` 前缀（`hidden
-  /// @2xl/composer:inline`）。内置/一方供应商（builtin、glm）无前缀
-  /// （镜像 ja() 判定）。返回 (前缀, 模型名)。
+  /// @2xl/composer:inline`）。前缀豁免 = 供应商名为空 或 `ja(providerId)`
+  /// —— Z.ai/BigModel 家族六个 `builtin:*` id（zapi 不豁免）。无
+  /// modelProviderId 的旧桌面端回退到 value 段判定（builtin/glm）。
+  /// 返回 (前缀, 模型名)。
   (String?, String) get _modelPrefixAndLabel {
     final v = _currentModelValue;
     for (final o in _modelOption?.options ?? const <ConfigOptionValue>[]) {
@@ -1538,11 +1541,14 @@ class _ChatPageState extends State<ChatPage>
         final seg = v.contains('/')
             ? v.substring(0, v.lastIndexOf('/'))
             : '';
-        final firstParty = seg.isEmpty ||
-            seg.startsWith('builtin') ||
-            seg == 'glm' ||
-            provider == null ||
-            provider.isEmpty;
+        final firstParty = provider == null ||
+            provider.isEmpty ||
+            (o.modelProviderId != null
+                ? isFamilyProviderId(o.modelProviderId) ||
+                    o.modelProviderId == 'glm'
+                : seg.isEmpty ||
+                    seg.startsWith('builtin') ||
+                    seg == 'glm');
         return (firstParty ? null : '$provider/', o.name);
       }
     }
@@ -4550,18 +4556,25 @@ class _UsageRingPainter extends CustomPainter {
       oldDelegate.ratio != ratio || oldDelegate.color != color;
 }
 
-/// Segment colors for the context composition bar — official palette is a
-/// five-step mix of usage-chart-1 (sky) toward the surface color.
+/// Segment colors for the context composition bar — official palette
+/// (`DI` array) is a five-step mix of usage-chart-1 toward the surface
+/// color. chart-1 under theme-zai-*: #4099ff dark / #0b7fff light (the
+/// remote web client always renders a zai theme); mixed toward the
+/// popover card color approximating `color-mix(…, --color-surface)`.
 List<Color> usageSegmentColors(BuildContext context) {
-  final base = Theme.of(context).brightness == Brightness.light
-      ? const Color(0xFF0284C7)
-      : const Color(0xFF0EA5E9);
-  final surface = Theme.of(context).scaffoldBackgroundColor;
+  final light = Theme.of(context).brightness == Brightness.light;
+  final base = ZInk.usageChart(context, 1);
+  final surface = light ? Colors.white : const Color(0xFF2B2B2B);
   return [
     for (final f in const [1.0, 0.78, 0.58, 0.42, 0.28])
       Color.lerp(surface, base, f)!,
   ];
 }
+
+/// Official cache-hit-rate row visibility (`OZe` with
+/// `showBelowThreshold: false`, `EZe = 0.78`): the row is hidden unless
+/// the rate is at least 78%.
+bool cacheHitRateVisible(double? hitRate) => hitRate != null && hitRate >= 0.78;
 
 /// 目标展示时机（对齐官方 goal 语义）：目标进行中/校验中/已暂停才算
 /// 活跃，进状态胶囊/面板；协议终态（completedSuccess /
@@ -6055,7 +6068,7 @@ class _QuestionItemState extends State<_QuestionItem> {
 
 // ---------------------------------------------------------------- sheets
 
-class _UsageSheet extends StatelessWidget {
+class _UsageSheet extends StatefulWidget {
   final ConversationState state;
   final BridgeSession session;
   final Map<String, dynamic> scope;
@@ -6069,7 +6082,58 @@ class _UsageSheet extends StatelessWidget {
   });
 
   @override
+  State<_UsageSheet> createState() => _UsageSheetState();
+}
+
+class _UsageSheetState extends State<_UsageSheet> {
+  // 官方 NZe：popover 每次打开都触发 onAccess 刷新权益快照（静音——
+  // 旧数据先展示，新数据到达后替换；失败不清空，lesson #4 精神）。
+  EntitlementSnapshot? _entitlement;
+  bool _quotaLoading = true;
+  bool _quotaRefreshing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadEntitlement();
+  }
+
+  Future<void> _loadEntitlement() async {
+    setState(() {
+      if (_entitlement == null) {
+        _quotaLoading = true;
+      } else {
+        _quotaRefreshing = true;
+      }
+    });
+    try {
+      final res = await widget.session.channels.call(
+        'usage-stats',
+        'getEntitlementSnapshot',
+        [
+          {'includeSubscription': true},
+        ],
+      );
+      if (!mounted) return;
+      setState(() {
+        final parsed = EntitlementSnapshot.parse(res);
+        if (parsed != null) _entitlement = parsed;
+        _quotaLoading = false;
+        _quotaRefreshing = false;
+      });
+    } catch (_) {
+      // 旧桌面端可能没有 usage-stats 通道：静默隐藏额度区即可。
+      if (!mounted) return;
+      setState(() {
+        _quotaLoading = false;
+        _quotaRefreshing = false;
+      });
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final state = widget.state;
     final usage = state.usage ?? const {};
     final cumulative = usage['cumulative'];
     final info = parseContextWindowInfo(usage);
@@ -6160,7 +6224,7 @@ class _UsageSheet extends StatelessWidget {
                     ],
                   ),
                 ),
-              if (info.cacheHitRate != null) ...[
+              if (cacheHitRateVisible(info.cacheHitRate)) ...[
                 const SizedBox(height: 4),
                 Divider(height: 1, color: ZInk.messageBorder(context)),
                 const SizedBox(height: 4),
@@ -6189,7 +6253,394 @@ class _UsageSheet extends StatelessWidget {
               _UsageRow('缓存读取', '${cumulative['cacheReadTokens'] ?? 0}'),
               _UsageRow('缓存写入', '${cumulative['cacheWriteTokens'] ?? 0}'),
             ],
+            // 官方 NZe 的第 4/5 区块：编程套餐「剩余额度」（fZe）或
+            // Start Plan「今日余额」（gZe）。快照不可见（未登录/无套餐/
+            // 旧桌面端无此通道）时整区隐藏，popover 只剩上下文部分。
+            ..._buildQuotaSections(info != null || cumulative is Map),
           ],
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _buildQuotaSections(bool separated) {
+    final snap = _entitlement;
+    if (_quotaLoading && snap == null) {
+      return [
+        if (separated) _quotaDivider(),
+        _PlanQuotaHeader(
+          title: '剩余额度',
+          loading: true,
+          onRefresh: _loadEntitlement,
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Row(
+            children: [
+              const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2)),
+              const SizedBox(width: 8),
+              Text('同步中...',
+                  style: TextStyle(fontSize: 12, color: ZInk.muted(context))),
+            ],
+          ),
+        ),
+      ];
+    }
+    if (snap == null || !snap.visible) return const [];
+    if (snap.isStartPlan) {
+      final limits = snap.startPlanLimits;
+      if (limits.isEmpty && !_quotaLoading) return const [];
+      return [
+        if (separated) _quotaDivider(),
+        _PlanQuotaHeader(
+          title: '今日余额',
+          loading: _quotaRefreshing,
+          onRefresh: _loadEntitlement,
+        ),
+        _StartPlanGrid(limits: limits, columns: limits.length.clamp(1, 3)),
+      ];
+    }
+    return [
+      if (separated) _quotaDivider(),
+      _PlanQuotaHeader(
+        title: '剩余额度',
+        loading: _quotaRefreshing,
+        onRefresh: _loadEntitlement,
+      ),
+      _CodingPlanQuotaGrid(snapshot: snap),
+    ];
+  }
+
+  Widget _quotaDivider() => Padding(
+        padding: const EdgeInsets.only(top: 8, bottom: 8),
+        child: Divider(height: 1, color: ZInk.messageBorder(context)),
+      );
+}
+
+/// 官方 fZe/gZe 区块标题行：`text-ui-base font-medium` 标题 + 右侧
+/// 刷新按钮（转圈 = 正在更新额度）。
+class _PlanQuotaHeader extends StatelessWidget {
+  final String title;
+  final bool loading;
+  final VoidCallback onRefresh;
+
+  const _PlanQuotaHeader({
+    required this.title,
+    required this.loading,
+    required this.onRefresh,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(title,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    fontSize: 14, fontWeight: FontWeight.w600)),
+          ),
+          SizedBox(
+            width: 24,
+            height: 24,
+            child: loading
+                ? const Padding(
+                    padding: EdgeInsets.all(5),
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : InkWell(
+                    onTap: onRefresh,
+                    customBorder: const CircleBorder(),
+                    child: Padding(
+                      padding: const EdgeInsets.all(4),
+                      child: Icon(Icons.refresh,
+                          size: 16, color: ZInk.muted(context)),
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 官方 fZe 额度栅格：5 小时 Prompt 池（chart-1）/ 每周（chart-2）/
+/// 工具调用（chart-3）三张卡 + ZCode MCP（chart-5）。MCP 在主卡满 3 张
+/// 时降级为 border-t 全宽单行（cZe full-row 形态），否则也是卡片。
+/// 栅格列数 = min(主卡数 + MCP?, 3)（官方 lI）。
+class _CodingPlanQuotaGrid extends StatelessWidget {
+  final EntitlementSnapshot snapshot;
+
+  const _CodingPlanQuotaGrid({required this.snapshot});
+
+  @override
+  Widget build(BuildContext context) {
+    final primaries = <(String, Color, QuotaLimit, String Function(int?))>[
+      if (snapshot.fiveHour != null)
+        ('5 小时', ZInk.usageChart(context, 1), snapshot.fiveHour!, formatResetClock),
+      if (snapshot.weekly != null)
+        ('每周', ZInk.usageChart(context, 2), snapshot.weekly!, formatResetDate),
+      if (snapshot.monthlyTool != null)
+        ('工具调用', ZInk.usageChart(context, 3), snapshot.monthlyTool!, formatResetDate),
+    ];
+    final mcp = snapshot.mcpAggregate;
+    if (primaries.isEmpty && mcp == null) {
+      // 官方 M 空态：按 unavailableReason 给文案 + 刷新按钮。
+      final reason = snapshot.unavailableReason;
+      final message = switch (reason) {
+        'not_configured' => '未找到已连接的编程套餐账号。',
+        'not_authenticated' => '登录后查看剩余额度。',
+        'no_plan' => '暂无有效编程套餐',
+        _ => '暂无可展示的额度明细。',
+      };
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Text(message,
+            style: TextStyle(fontSize: 12, color: ZInk.muted(context))),
+      );
+    }
+    final columns = math.min(primaries.length + (mcp != null ? 1 : 0), 3);
+    final mcpFullRow = primaries.length >= 3 && mcp != null;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _QuotaGrid(
+          columns: columns,
+          children: [
+            for (final (label, color, limit, fmt) in primaries)
+              _QuotaCard(
+                label: label,
+                color: color,
+                valueText: formatQuotaPercent(limit.remainingPercent),
+                resetText: fmt(limit.nextResetTime),
+                percent: limit.remainingPercent ?? 0,
+              ),
+            if (mcp != null && !mcpFullRow)
+              _QuotaCard(
+                label: 'ZCode MCP',
+                color: ZInk.usageChart(context, 5),
+                valueText: formatQuotaPercent(mcp.remainingPercent),
+                resetText: formatResetDate(mcp.nextResetTime),
+                percent: mcp.remainingPercent ?? 0,
+              ),
+          ],
+        ),
+        if (mcpFullRow)
+          Padding(
+            // cZe full-row：border-t + label 左、数值右、1/3 宽进度条。
+            padding: const EdgeInsets.only(top: 6, bottom: 2),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Divider(height: 1, color: ZInk.messageBorder(context)),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Tooltip(
+                      message: 'ZCode 预置插件 MCP 每日合计额度',
+                      child: Text('ZCode MCP',
+                          style: TextStyle(
+                              fontSize: 12, color: ZInk.muted(context))),
+                    ),
+                    const Spacer(),
+                    Text(
+                      '${formatQuotaPercent(mcp.remainingPercent)}'
+                      '${mcp.nextResetTime != null ? ' · ${formatResetDate(mcp.nextResetTime)}' : ''}',
+                      style: TextStyle(
+                          fontSize: 12,
+                          fontFamily: 'monospace',
+                          color: ZInk.soft(context)),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: FractionallySizedBox(
+                    widthFactor: 1 / 3,
+                    child: _QuotaBar(
+                      color: ZInk.usageChart(context, 5),
+                      percent: mcp.remainingPercent ?? 0,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// 官方 gZe「今日余额」栅格：每模型一张卡（hZe）——模型名 + mono 剩余
+/// 百分比 + 自适应重置时间 + 绿色（success）进度条。
+class _StartPlanGrid extends StatelessWidget {
+  final List<QuotaLimit> limits;
+  final int columns;
+
+  const _StartPlanGrid({required this.limits, required this.columns});
+
+  @override
+  Widget build(BuildContext context) {
+    return _QuotaGrid(
+      columns: columns,
+      children: [
+        for (final limit in limits)
+          _QuotaCard(
+            label: startPlanLimitLabel(limit),
+            color: ZInk.usageChart(context, 2),
+            valueText:
+                formatStartPlanPercent(limit.remaining, limit.number),
+            resetText: formatResetAdaptive(limit.nextResetTime),
+            percent: (limit.number ?? 0) > 0
+                ? (((limit.remaining ?? 0) / limit.number!) * 100)
+                    .clamp(0.0, 100.0)
+                : 0,
+          ),
+      ],
+    );
+  }
+}
+
+/// 官方 `grid gap-2` + lI 列数（1/2/3）。
+class _QuotaGrid extends StatelessWidget {
+  final int columns;
+  final List<Widget> children;
+
+  const _QuotaGrid({required this.columns, required this.children});
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const gap = 8.0;
+        final colW =
+            (constraints.maxWidth - gap * (columns - 1)) / columns;
+        final rows = <Widget>[];
+        for (var i = 0; i < children.length; i += columns) {
+          if (rows.isNotEmpty) rows.add(const SizedBox(height: gap));
+          final slice = children.sublist(
+              i, math.min(i + columns, children.length));
+          rows.add(Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (var j = 0; j < slice.length; j++) ...[
+                if (j > 0) const SizedBox(width: gap),
+                SizedBox(width: colW, child: slice[j]),
+              ],
+            ],
+          ));
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: rows,
+        );
+      },
+    );
+  }
+}
+
+/// 官方 dZe 额度卡：label(subtle 12) → mono 剩余% + · 重置时间(xs)
+/// → 6px 圆角进度条（track surface-hover，填充 chart 色，>0 时最小
+/// 6px 宽，宽度过渡 500ms ease-out）。
+class _QuotaCard extends StatelessWidget {
+  final String label;
+  final Color color;
+  final String valueText;
+  final String resetText;
+  final double percent;
+
+  const _QuotaCard({
+    required this.label,
+    required this.color,
+    required this.valueText,
+    required this.resetText,
+    required this.percent,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 12, color: ZInk.muted(context))),
+        const SizedBox(height: 2),
+        Text.rich(
+          TextSpan(
+            children: [
+              TextSpan(
+                text: valueText,
+                style: TextStyle(
+                    fontSize: 12,
+                    fontFamily: 'monospace',
+                    color: ZInk.soft(context)),
+              ),
+              if (resetText.isNotEmpty)
+                TextSpan(
+                  text: ' · $resetText',
+                  style:
+                      TextStyle(fontSize: 10.5, color: ZInk.faint(context)),
+                ),
+            ],
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        const SizedBox(height: 6),
+        _QuotaBar(color: color, percent: percent),
+      ],
+    );
+  }
+}
+
+class _QuotaBar extends StatelessWidget {
+  final Color color;
+
+  /// 0..100 remaining percent.
+  final double percent;
+
+  const _QuotaBar({required this.color, required this.percent});
+
+  @override
+  Widget build(BuildContext context) {
+    final clamped = (percent / 100).clamp(0.0, 1.0);
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(999),
+      child: SizedBox(
+        height: 6,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            var f = clamped;
+            // 官方 `u>0 → min-w-1.5`：非零剩余至少 6px 可见。
+            if (f > 0 && constraints.maxWidth > 0) {
+              f = math.max(f, math.min(1.0, 6 / constraints.maxWidth));
+            }
+            return Stack(
+              children: [
+                Positioned.fill(
+                  child: ColoredBox(color: ZInk.surfaceHover(context)),
+                ),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: AnimatedFractionallySizedBox(
+                    duration: const Duration(milliseconds: 500),
+                    curve: Curves.easeOut,
+                    widthFactor: f,
+                    child: ColoredBox(color: color),
+                  ),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );

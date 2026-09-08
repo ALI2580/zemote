@@ -2,6 +2,18 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### Added
+- **用量弹层「套餐额度」区（官方自营模型特殊样式复刻）**：解密官方 NZe/fZe/gZe 后落地——编程套餐账号显示 5 小时 Prompt 池 / 每周额度 / 工具调用 / ZCode MCP 四项剩余额度（官方 usage-chart 色板、6px 圆角进度条带 500ms 宽度过渡、重置时间 HH:mm 或 M月d日，主卡满 3 张时 MCP 降级为分隔线全宽单行）；Start Plan 账号显示每模型「今日余额」卡（剩余百分比 + 自适应重置时间 + 绿色进度条）。数据走 `usage-stats` 通道 `getEntitlementSnapshot`（官方同链路），弹层打开即静默拉取，失败/未登录/无套餐/旧桌面端无通道时整区自动隐藏；解析层为纯 Dart（lib/protocol/entitlement.dart），test/entitlement_test.dart 锚定。
+- **模型菜单置顶复刻**：`builtin:*` 官方供应商组按固定优先级恒排最前（zai-start-plan < zai-coding-plan < zai < bigmodel 系 < zapi < 其他保持原序，镜像官方 KI/GI 稳定排序），一方组内推荐模型 GLM-5.2 / GLM-5-Turbo 置顶（官方 Ed 集合）；`ConfigOptionValue` 补解析 `modelProviderId`（缺失时回退 value 段推导）。
+
+### Changed
+- **上下文组成条色板对齐 zai 主题**：chart-1 改为深 #4099ff / 浅 #0b7fff（remote 客户端恒挂 theme-zai-*，此前误用默认主题 sky 色值）。
+
+### Fixed
+- **缓存命中率行按官方阈值显示**：hitRate < 78% 时整行隐藏（官方 OZe showBelowThreshold:false），此前只要有值就显示。
+
 ## [0.6.11] - 2026-09-07
 
 ### Changed

@@ -3,12 +3,22 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../protocol/conversation.dart';
+import '../protocol/entitlement.dart';
 import 'official_icons.dart';
 import 'theme.dart';
 
-/// Groups model options by provider, preserving first-appearance order.
-/// Key prefers the desktop-provided `modelProviderName`; falls back to the
-/// provider segment of the value (`builtin:plan/GLM-5.2` → `builtin:plan`).
+/// Groups model options by provider and orders the groups the way the
+/// official model menu does (bundle `KI`/`GI`, 2026-09-08 decryption):
+/// `builtin:*` preset providers come first in a fixed priority order
+/// (Z.ai start/coding/api-key, BigModel start/coding/api-key, ZAPI),
+/// everything else keeps its wire order after them (stable sort at
+/// priority 200). Key prefers the desktop-provided `modelProviderName`;
+/// falls back to the provider segment of the value
+/// (`builtin:zai/GLM-5.2` → `builtin:zai`).
+///
+/// Inside a first-party group the recommended models (`GLM-5.2`,
+/// `GLM-5-Turbo` — official `Ed` set) are pinned to the top in that
+/// order; the rest keep their wire order.
 Map<String, List<ConfigOptionValue>> groupModelOptions(
     List<ConfigOptionValue> options) {
   String keyOf(ConfigOptionValue v) {
@@ -23,7 +33,61 @@ Map<String, List<ConfigOptionValue>> groupModelOptions(
   for (final v in options) {
     groups.putIfAbsent(keyOf(v), () => []).add(v);
   }
-  return groups;
+
+  // Group priority = best (lowest) priority among its options' provider
+  // ids; ties keep first-appearance order (the official sort is stable).
+  int priorityOf(List<ConfigOptionValue> members) {
+    var best = 200;
+    for (final v in members) {
+      best = math.min(best, officialProviderPriority(_providerIdOf(v)));
+    }
+    return best;
+  }
+
+  final order = <String, int>{};
+  var index = 0;
+  for (final entry in groups.entries) {
+    order[entry.key] = index++;
+  }
+  final sortedKeys = groups.keys.toList()
+    ..sort((a, b) {
+      final p = priorityOf(groups[a]!).compareTo(priorityOf(groups[b]!));
+      return p != 0 ? p : order[a]!.compareTo(order[b]!);
+    });
+
+  return {
+    for (final key in sortedKeys) key: _pinRecommended(groups[key]!),
+  };
+}
+
+/// Stable pin of the official recommended models inside one provider
+/// group; non-first-party groups are returned untouched.
+List<ConfigOptionValue> _pinRecommended(List<ConfigOptionValue> members) {
+  final firstParty = members.any((v) => isBuiltinProviderId(_providerIdOf(v)));
+  if (!firstParty) return members;
+  int rankOf(ConfigOptionValue v) {
+    final idx = v.value.lastIndexOf('/');
+    final model = idx < 0 ? v.value : v.value.substring(idx + 1);
+    final rank = kRecommendedModels.indexOf(model);
+    return rank < 0 ? kRecommendedModels.length : rank;
+  }
+
+  final indexed = [for (var i = 0; i < members.length; i++) (i, members[i])];
+  indexed.sort((a, b) {
+    final r = rankOf(a.$2).compareTo(rankOf(b.$2));
+    return r != 0 ? r : a.$1.compareTo(b.$1);
+  });
+  return [for (final e in indexed) e.$2];
+}
+
+/// Provider id of an option: the schema field when present, else the
+/// provider segment of the value (`builtin:zai/GLM-5.2` → `builtin:zai`)
+/// so older desktops that omit `modelProviderId` still get pinned.
+String? _providerIdOf(ConfigOptionValue v) {
+  final id = v.modelProviderId?.trim();
+  if (id != null && id.isNotEmpty) return id;
+  final idx = v.value.lastIndexOf('/');
+  return idx <= 0 ? null : v.value.substring(0, idx);
 }
 
 /// One row inside a composer menu card.

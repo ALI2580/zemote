@@ -232,11 +232,15 @@ bg-surface px-4 py-3 text-ui-base text-foreground @min-[624px]/conversation:max-
      （并列按固定序 messages>system_prompt>meta_user_context>skills>
      tool_prompt>system_tool_schemas>mcp_tool_schemas），颜色=usage-chart-1
      的 5 阶 `color-mix`（100%/78%/58%/42%/28% 混 surface）。
-     浅色 chart-1=sky-600 `#0284c7`，深色=sky-500 `#0ea5e9`。
+     **theme-zai-* 下 chart-1 = 深 #4099ff / 浅 #0b7fff**（0908 修正：
+     旧笔记记的 sky-500/600 是默认主题，remote 客户端恒挂 zai 主题）。
   3. 明细列表：色块(size-2 rounded-sm)+来源名(subtle)+mono 百分比；
      百分比格式 `maximumFractionDigits: p>=0.1?0:1`。
-  4. 「平均缓存命中率」行：`border-t` 分隔，mono 百分比。
-  5. quota/plan 区（codingPlan 相关，Zemote 不做）。
+  4. 「平均缓存命中率」行：`border-t` 分隔，mono 百分比；
+     **hitRate < 0.78 时整行隐藏**（`OZe` showBelowThreshold:false，
+     `EZe=.78`，0908 解密）。
+  5. **套餐额度区（fZe，0908 解密，见下节）**。
+  6. **Start Plan 今日余额区（gZe，0908 解密，见下节）**。
 - **数据源**：快照 `usage.contextWindow`：
   `{usedTokens, maxTokens, cache?: {hitRate}, breakdown?: [{source, chars}]}`。
   breakdown 按 **chars 求和**（同名 source 累加）。旧桌面端可缺 cache/breakdown，
@@ -248,6 +252,90 @@ bg-surface px-4 py-3 text-ui-base text-foreground @min-[624px]/conversation:max-
   `chat.contextUsage`「上下文已用 {used} / 总量 {total}」；
   compress 相关键（压缩 / 发送 {command} 压缩当前上下文 / 打开 Token 调试）挂在
   quota 区，未随环实现。
+- 注：i18n 里的 `chat.planUsage.*` 键（套餐用量/5 小时 Prompt 池等）在 web
+  bundle **零引用**——那是桌面端的键；web 真身用 `sidebar.usage.plan.*`。
+
+### 用量 popover 套餐额度区（2026-09-08 解密：NZe/fZe/gZe + 数据链）
+
+- **组件链**：NZe（环+popover 本体）props = `{codingPlanUsageRemaining,
+  startPlanBalance, taskUsage(=contextWindow), selectedProvider}`。
+  popover 内容顺序：上下文区 → fZe（编程套餐「剩余额度」）→ gZe（Start
+  Plan「今日余额」）。区块分隔 `border-t border-border pt-2`，整体 space-y-3。
+- **数据源**：`usage-stats` 通道 `getEntitlementSnapshot`（web 端经
+  `Ku.toService(getChannel(Wi.UsageStats))` 代理 → `service.method(args)` =
+  `channel.call(method, [args])`，与 Zemote channels.call 同构）。参数
+  `{includeSubscription:true, preferredProviderId, requirePreferredProvider:true,
+  allowDisabledPreferredProvider:true, allowEnvApiKey:false}`；官方每次打开
+  popover 触发 onAccess 刷新（带新鲜度缓存）。**桥接前服务是 throw 占位
+  Proxy（Z9），桥接后才有真身**。
+- **快照 shape**：`{provider:{id}, context, quota:{level, limits:[{type,
+  unit, number, remaining, percentage(已用%), nextResetTime(ms),
+  usageDetails:[{modelCode, displayName}]}]}, mcpQuota:{aggregate:{…limit}},
+  remaining:{isShow,count,percentage,nextResetTime}, subscription:{details},
+  unavailableReason}`。
+- **limit 选择器（MF/NF）**：type 家族 TOKENS_LIMIT≡CREDIT_LIMIT（YYe）；
+  5 小时池 = unit 3 & number 5；每周 = unit 6；工具调用 = TIME_LIMIT unit 5 &
+  number 1；ZCode MCP = mcpQuota.aggregate。
+- **显示值（PF/IF）**：剩余% = clamp(100-percentage,0,100)；文本 >=10 → 0 位
+  小数、<10 → 1 位，null → `--`。
+- **重置时间**：5 小时 → HH:mm（uZe）；每周/工具/MCP → `M月d日`（LF date）；
+  Start Plan → adaptive（当天 HH:mm，否则日期）。
+- **fZe 布局**：标题行「剩余额度」(14 medium) + 右侧重置/刷新钮（eZe：
+  refreshing 转圈 → 成功 check → 更多）。栅格 `grid gap-2`，列数
+  lI = min(主卡数+MCP?,3) → 1/2/3 列。卡（dZe）：label(subtle 12 truncate)
+  → mono 剩余% + ` · ` 重置时间(text-ui-xs subtle，宽度不足时隐藏——
+  ResizeObserver 实测) → 6px 圆角条（track surface-hover 深#ffffff1a/
+  浅#0d0d0d0d，填充色 5 小时=chart-1/每周=chart-2/工具=chart-3，>0 →
+  min-w-1.5(6px)，width 500ms ease-out）。**MCP 行（cZe）**：主卡 ≥3 时
+  变全宽单行（border-t pt-1.5：label+info 图标 / 右 mono 值 / 1/3 宽条，
+  chart-5 橙）；否则第 3/4 张卡。空态：loading 转圈「同步中...」；
+  error/未配置/no_plan → 文案 + 「刷新额度」按钮。
+- **gZe（今日余额）**：limits 过滤 CI（(number??unit??0)>0 || remaining>0），
+  每模型一卡（hZe）：SI 标签 = usageDetails 的 displayName/modelCode 经
+  yI/mZe 美化（GLM-5.2 / GLM-5Turbo 特判）' / ' 连接，空回退 limit.type；
+  剩余% = clamp(remaining/number) 0 位小数；条 = bg-success（zai 下 =
+  chart-2 同值）。标题右侧可带「升级」按钮（onUpgradeClick）。
+- **可见性（BF/AS）**：provider.id 匹配 && unavailableReason≠no_plan &&
+  (quota||subscription||remaining)，否则整区隐藏。
+- **环色语义（bZe）**：额度重置机会 available → `text-success`；urgent
+  （距重置 <3 分钟）→ `bg-warning/10 text-warning`；默认 subtle。配套
+  quota-reset celebration（jXe/MXe 状态机 + 彩带动画）——Zemote 未做。
+- **theme-zai-* chart 色板**（0908 从 CSS 抓取）：chart-1 深#4099ff/
+  浅#0b7fff，chart-2 #46bf72/#1e8a3e，chart-3 #7b5ce5/#9e77ed，
+  chart-4 #ff5c5c/#e03131，chart-5 #ff8a30/#e07b00，chart-6 #42c8c8/#0aa7a7。
+- Zemote 落地（0908）：`lib/protocol/entitlement.dart`（纯 Dart 解析/
+  格式化，test/entitlement_test.dart 锚定）+ `_UsageSheet` 改 Stateful
+  （打开即拉快照，失败静默隐藏）+ `_CodingPlanQuotaGrid`/`_StartPlanGrid`/
+  `_QuotaCard`/`_QuotaBar`；theme.dart 增 `ZInk.usageChart(n)`/
+  `surfaceHover`；usageSegmentColors 换 zai chart-1。
+
+### 模型菜单置顶（2026-09-08 解密：KI/GI/YZe + Ed + wv）
+
+- **供应商 id 枚举（G，`builtin:` 前缀）**：`builtin:zai`、
+  `builtin:zai-coding-plan`、`builtin:zai-start-plan`、`builtin:bigmodel`、
+  `builtin:bigmodel-coding-plan`、`builtin:bigmodel-start-plan`、
+  `builtin:zapi`。`po/Sd` = 七个之一（builtin scope）；`ja/wv` = 除 zapi
+  的六个家族 id（**前缀豁免**：PAe 里 providerId ∈ 家族 → 模型 chip 不加
+  `{provider}/` 前缀）。
+- **菜单分组排序（KI+GI）**：固定优先级 zai-start-plan(0) < zai-coding-plan(1)
+  < zai(2) < bigmodel-start-plan(3) < bigmodel-coding-plan(4) < bigmodel(5)
+  < zapi(6) < 其他(200)；同级保持原序（stable sort）。**这就是"官方模型
+  置顶"的真身**——builtin 家族组恒在最上。家族组（cQe）合并 start/coding/
+  apiKey 为一组「Z.ai」/「BigModel」+ badge（Start/Individual/Team/API）+
+  连接切换下拉；一方组 `directItems:true` 平铺，其余组走 hover 子菜单。
+- **推荐模型集（Ed）**：`['GLM-5.2','GLM-5-Turbo']` —— start-plan 供应商
+  的模型列表**只显示**这两个 + 用户显式配置过的模型（YI 过滤器）；默认
+  模型 `glm-5.2`（Od），默认思考档 `['max','high','nothink']`（Dd）。
+- **组内模型序**：桌面 provider registry 原始顺序（yf），无重排。
+- **option schema 补全**：configOptions 的模型项带 `modelProviderId`、
+  `modelProviderName`、`modelThoughtLevels`、`modelDefaultThoughtLevel`
+  （0908 确认；Zemote ConfigOptionValue 已补 modelProviderId）。
+- **Nce 过滤**：origin=injected 或 description 以 "custom model" 开头的
+  option 从菜单剔除（Zemote 未做，桌面端 remote 场景暂未见 injected）。
+- Zemote 落地（0908）：`groupModelOptions` 按 officialProviderPriority
+  排序组（modelProviderId 缺失回退 value 段），一方组内 kRecommendedModels
+  置顶（test/composer_menu_regression_test.dart 锚定）；家族合并/badge/
+  directItems 未做（Zemote 二级下钻交互保留）。
 
 ### 配置两层模型与 draft 收敛（2026-09-09 解密，Fn.current）
 

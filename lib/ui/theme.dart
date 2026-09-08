@@ -229,6 +229,33 @@ class ZInk {
   static Color codeText(BuildContext context) => _isLight(context)
       ? const Color(0xFF333333)
       : const Color(0xFF93C5FD);
+
+  /// Official `--color-surface-hover` (bar tracks): white@10% dark,
+  /// black@5% light (theme-zai-* values).
+  static Color surfaceHover(BuildContext context) => _isLight(context)
+      ? const Color(0x0D0D0D0D)
+      : const Color(0x1AFFFFFF);
+
+  /// Official `--color-usage-chart-N` (theme-zai-* values): 1 blue,
+  /// 2 green, 3 violet, 5 orange. Index is 1-based; unknown indexes fall
+  /// back to chart-1 (the bundle does `DI[min(i, len-1)] ?? DI[0]`).
+  static Color usageChart(BuildContext context, int index) {
+    final light = _isLight(context);
+    switch (index) {
+      case 2:
+        return light ? const Color(0xFF1E8A3E) : const Color(0xFF46BF72);
+      case 3:
+        return light ? const Color(0xFF9E77ED) : const Color(0xFF7B5CE5);
+      case 4:
+        return light ? const Color(0xFFE03131) : const Color(0xFFFF5C5C);
+      case 5:
+        return light ? const Color(0xFFE07B00) : const Color(0xFFFF8A30);
+      case 6:
+        return light ? const Color(0xFF0AA7A7) : const Color(0xFF42C8C8);
+      default:
+        return light ? const Color(0xFF0B7FFF) : const Color(0xFF4099FF);
+    }
+  }
 }
 
 ThemeData buildDarkTheme() {

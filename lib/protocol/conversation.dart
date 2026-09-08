@@ -1171,12 +1171,18 @@ class ConfigOptionValue {
   final String value;
   final String name;
   final String? description;
+
+  /// Official option schema carries both `modelProviderId` (stable id,
+  /// e.g. `builtin:zai-coding-plan`) and `modelProviderName` (display
+  /// label). The id drives first-party checks and menu pinning.
+  final String? modelProviderId;
   final String? modelProviderName;
 
   ConfigOptionValue._(Map raw)
       : value = '${raw['value'] ?? ''}',
         name = '${raw['name'] ?? raw['value'] ?? ''}',
         description = raw['description'] as String?,
+        modelProviderId = raw['modelProviderId'] as String?,
         modelProviderName = raw['modelProviderName'] as String?;
 
   /// Test/dev seam mirroring the wire shape, so UI tests can build option

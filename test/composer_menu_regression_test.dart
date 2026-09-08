@@ -5,15 +5,69 @@ import 'package:zemote/protocol/conversation.dart';
 import 'package:zemote/ui/chat_page.dart';
 import 'package:zemote/ui/composer_menu.dart';
 
-ConfigOptionValue _opt(String provider, String model, {String? name}) {
+ConfigOptionValue _opt(String provider, String model,
+    {String? name, String? providerId}) {
   return ConfigOptionValue.fromRaw({
     'value': '$provider/$model',
     'name': name ?? model,
     'modelProviderName': provider,
+    if (providerId != null) 'modelProviderId': providerId,
   });
 }
 
 void main() {
+  group('groupModelOptions pinning (official KI priority + Ed set)', () {
+    test('builtin provider groups float to the top in official order', () {
+      final groups = groupModelOptions([
+        _opt('My Router', 'claude-4', providerId: 'custom:openrouter'),
+        _opt('BigModel', 'GLM-4.6', providerId: 'builtin:bigmodel'),
+        _opt('Z.ai', 'GLM-5.2', providerId: 'builtin:zai-coding-plan'),
+      ]);
+      expect(groups.keys.toList(), ['Z.ai', 'BigModel', 'My Router']);
+    });
+
+    test('zai-start-plan beats zai-coding-plan beats zai', () {
+      final groups = groupModelOptions([
+        _opt('Z.ai', 'GLM-5.2', providerId: 'builtin:zai'),
+        _opt('Z.ai CP', 'GLM-5.2', providerId: 'builtin:zai-coding-plan'),
+        _opt('Z.ai SP', 'GLM-5.2', providerId: 'builtin:zai-start-plan'),
+      ]);
+      expect(groups.keys.toList(), ['Z.ai SP', 'Z.ai CP', 'Z.ai']);
+    });
+
+    test('recommended models pin to the top inside a builtin group', () {
+      final groups = groupModelOptions([
+        _opt('Z.ai', 'GLM-4.6', providerId: 'builtin:zai'),
+        _opt('Z.ai', 'GLM-5-Turbo', providerId: 'builtin:zai'),
+        _opt('Z.ai', 'GLM-4.5-air', providerId: 'builtin:zai'),
+        _opt('Z.ai', 'GLM-5.2', providerId: 'builtin:zai'),
+      ]);
+      expect(groups['Z.ai']!.map((v) => v.name).toList(),
+          ['GLM-5.2', 'GLM-5-Turbo', 'GLM-4.6', 'GLM-4.5-air']);
+    });
+
+    test('custom provider groups keep their wire order untouched', () {
+      final groups = groupModelOptions([
+        _opt('Router A', 'GLM-5.2', providerId: 'custom:a'),
+        _opt('Router A', 'GLM-4.6', providerId: 'custom:a'),
+        _opt('Router B', 'gpt-x', providerId: 'custom:b'),
+      ]);
+      expect(groups.keys.toList(), ['Router A', 'Router B']);
+      // GLM-5.2 is NOT reordered inside a non-first-party group.
+      expect(groups['Router A']!.first.name, 'GLM-5.2');
+    });
+
+    test('missing modelProviderId falls back to the value segment', () {
+      final groups = groupModelOptions([
+        _opt('custom:x', 'foo'),
+        _opt('builtin:zai', 'GLM-4.6'),
+        _opt('builtin:zai', 'GLM-5.2'),
+      ]);
+      expect(groups.keys.toList(), ['builtin:zai', 'custom:x']);
+      expect(groups['builtin:zai']!.first.name, 'GLM-5.2');
+    });
+  });
+
   group('slashCommandMatchScore', () {
     test('empty query matches everything as prefix', () {
       expect(slashCommandMatchScore('compact', ''), 0);

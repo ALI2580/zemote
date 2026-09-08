@@ -122,4 +122,15 @@ void main() {
       expect(thoughtBarFill(<String>[], 'max'), 0);
     });
   });
+
+  group('cacheHitRateVisible (official OZe threshold)', () {
+    test('hidden below 0.78, shown at or above', () {
+      expect(cacheHitRateVisible(null), isFalse);
+      expect(cacheHitRateVisible(0.0), isFalse);
+      expect(cacheHitRateVisible(0.77), isFalse);
+      expect(cacheHitRateVisible(0.78), isTrue);
+      expect(cacheHitRateVisible(0.87), isTrue);
+      expect(cacheHitRateVisible(1.0), isTrue);
+    });
+  });
 }
